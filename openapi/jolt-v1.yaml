@@ -1,0 +1,519 @@
+openapi: 3.0.3
+info:
+  title: Jolt Social API
+  version: 0.1.0
+  description: >
+    Backend for Jolt's friends/pokes feature (see docs/RE-FINDINGS.md and the
+    mobile app's `Domain/Repositories/{Auth,Friends,Poke}Repository.swift`).
+    This spec is the contract the mobile client's `MockSocialBackend` already
+    implements in-memory — the real server should be a drop-in replacement,
+    no client-side changes needed beyond swapping the repository
+    implementation.
+
+    Scope, per product decision: no discovery. A friend request always
+    targets someone specific, either by their exact `@handle` or by an
+    invite code/QR they shared out-of-band. Permissions are per-stimulus
+    (zap/vibe/beep), each with its own allow flag, intensity cap, and
+    cooldown, and are always edited from the *granter's* side.
+
+servers:
+  - url: https://jolt.example.com/api/v1
+    description: Production.
+  - url: http://127.0.0.1:3000/api/v1
+    description: Local development.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: auth
+  - name: devices
+  - name: friends
+  - name: pokes
+
+paths:
+  /auth/signup:
+    post:
+      tags: [auth]
+      summary: Create an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password, handle, displayName]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password, minLength: 8 }
+                handle:
+                  type: string
+                  description: Unique, lowercase, no `@` prefix. No discovery — this is how friends find *you*.
+                  pattern: '^[a-z0-9_]{3,20}$'
+                displayName: { type: string, minLength: 1, maxLength: 50 }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '409':
+          description: Email or handle already taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Log in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthResponse' }
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Invalidate the current session token
+      responses:
+        '204': { description: Logged out }
+
+  /me:
+    get:
+      tags: [auth]
+      summary: Current account, including your own invite code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Me' }
+
+  /devices/push-token:
+    post:
+      tags: [devices]
+      summary: Register this device's APNs token for the signed-in account
+      description: >
+        Called once per launch after `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
+        A user may have multiple registered devices; poke pushes fan out to all of them.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, platform]
+              properties:
+                token: { type: string, description: Hex-encoded APNs device token }
+                platform: { type: string, enum: [ios] }
+      responses:
+        '204': { description: Registered }
+
+  /friends:
+    get:
+      tags: [friends]
+      summary: Accepted friends, with the permissions each side has granted
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Friend' }
+
+  /friends/{friendId}:
+    delete:
+      tags: [friends]
+      summary: Remove a friend (unfriend both directions)
+      parameters:
+        - $ref: '#/components/parameters/FriendId'
+      responses:
+        '204': { description: Removed }
+
+  /friends/{friendId}/permissions/{stimulusKind}:
+    put:
+      tags: [friends]
+      summary: Set what this friend is allowed to send you, for one stimulus kind
+      description: Always edits *your* grant to them — never the reverse.
+      parameters:
+        - $ref: '#/components/parameters/FriendId'
+        - $ref: '#/components/parameters/StimulusKindParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StimulusPermission' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StimulusPermission' }
+
+  /friends/requests:
+    get:
+      tags: [friends]
+      summary: Pending requests, both directions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  incoming:
+                    type: array
+                    items: { $ref: '#/components/schemas/FriendRequest' }
+                  outgoing:
+                    type: array
+                    items: { $ref: '#/components/schemas/FriendRequest' }
+    post:
+      tags: [friends]
+      summary: Send a friend request by handle or invite code
+      description: Exactly one of `handle` / `inviteCode` must be set — there is no discovery/search endpoint by design.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                handle: { type: string }
+                inviteCode: { type: string }
+              minProperties: 1
+              maxProperties: 1
+      responses:
+        '201':
+          description: Request sent
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FriendRequest' }
+        '404':
+          description: No account with that handle/invite code
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Already friends, or a request already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /friends/requests/{requestId}/accept:
+    post:
+      tags: [friends]
+      summary: Accept an incoming request
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Now friends — both sides start with all stimuli disabled until each grants permissions
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Friend' }
+
+  /friends/requests/{requestId}/reject:
+    post:
+      tags: [friends]
+      summary: Reject an incoming request (or cancel one you sent)
+      parameters:
+        - $ref: '#/components/parameters/RequestId'
+      responses:
+        '204': { description: Removed }
+
+  /pokes:
+    get:
+      tags: [pokes]
+      summary: Activity log — sent and received, newest first
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 200 }
+        - name: before
+          in: query
+          description: Return events created before this event's timestamp (pagination cursor)
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PokeEvent' }
+    post:
+      tags: [pokes]
+      summary: Send a poke
+      description: >
+        Server re-validates the sender's permission grant server-side
+        (client-side clamping in the composer is UX only, not
+        authoritative) and pushes `PokePushPayload` to every device the
+        recipient has registered, as both a standard alert push (guarantees
+        the recipient finds out — see delivery-model note below) and a
+        best-effort silent `content-available` push (may fire without the
+        recipient touching anything, but iOS gives no delivery-time
+        guarantee).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [friendId, stimulus]
+              properties:
+                friendId: { type: string, format: uuid }
+                stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+      responses:
+        '201':
+          description: >
+            Poke accepted and queued for push delivery. `status` is always
+            `pending` here — it reflects only that the *permission* check
+            passed, not whether the stimulus actually fired. The recipient's
+            device reports the real outcome via `POST /pokes/{pokeId}/ack`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PokeEvent' }
+        '403':
+          description: Recipient hasn't allowed this stimulus, or intensity exceeds their cap
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /pokes/{pokeId}/ack:
+    post:
+      tags: [pokes]
+      summary: Recipient's device reports what actually happened
+      description: >
+        Called by `JoltAppDelegate`/`AppNotificationDelegate` after handling
+        an incoming push — see `PokeRepository.handleIncomingPoke(_:)`.
+        Idempotent: acking the same `pokeId` twice (e.g. once from a silent
+        push, once from a notification tap) must not change the recorded
+        status after the first ack.
+      parameters:
+        - name: pokeId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/PokeDeliveryStatus' }
+      responses:
+        '200':
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PokeEvent' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    FriendId:
+      name: friendId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    StimulusKindParam:
+      name: stimulusKind
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/StimulusKind' }
+
+  schemas:
+    StimulusKind:
+      type: string
+      enum: [zap, vibe, beep]
+
+    StimulusConfig:
+      type: object
+      required: [kind, intensity, repetitions]
+      properties:
+        kind: { $ref: '#/components/schemas/StimulusKind' }
+        intensity: { type: integer, minimum: 0, maximum: 100 }
+        repetitions: { type: integer, minimum: 1, maximum: 5 }
+
+    StimulusPermission:
+      type: object
+      required: [isAllowed, maxIntensity, cooldownSeconds]
+      properties:
+        isAllowed: { type: boolean }
+        maxIntensity: { type: integer, minimum: 0, maximum: 100 }
+        cooldownSeconds:
+          type: integer
+          minimum: 0
+          description: Minimum seconds between pokes of this kind from this friend; enforced server-side.
+
+    FriendPermissionSet:
+      type: object
+      required: [zap, vibe, beep]
+      properties:
+        zap: { $ref: '#/components/schemas/StimulusPermission' }
+        vibe: { $ref: '#/components/schemas/StimulusPermission' }
+        beep: { $ref: '#/components/schemas/StimulusPermission' }
+
+    User:
+      type: object
+      required: [id, handle, displayName]
+      properties:
+        id: { type: string, format: uuid }
+        handle: { type: string }
+        displayName: { type: string }
+
+    Me:
+      allOf:
+        - $ref: '#/components/schemas/User'
+        - type: object
+          required: [email, inviteCode]
+          properties:
+            email: { type: string, format: email }
+            inviteCode:
+              type: string
+              description: Shown as text + QR in the app's "Add friend" sheet so someone else can add you.
+
+    AuthResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token: { type: string, description: Bearer JWT for subsequent requests }
+        user: { $ref: '#/components/schemas/Me' }
+
+    Friend:
+      type: object
+      required: [id, handle, displayName, permissionsGrantedToMe, permissionsIGranted]
+      properties:
+        id: { type: string, format: uuid }
+        handle: { type: string }
+        displayName: { type: string }
+        permissionsGrantedToMe:
+          description: What THEY allow you to send them — drives the poke composer's options.
+          allOf: [{ $ref: '#/components/schemas/FriendPermissionSet' }]
+        permissionsIGranted:
+          description: What you allow THEM to send you — yours to edit via PUT .../permissions/{stimulusKind}.
+          allOf: [{ $ref: '#/components/schemas/FriendPermissionSet' }]
+
+    FriendRequest:
+      type: object
+      required: [id, handle, displayName, direction, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        handle: { type: string }
+        displayName: { type: string }
+        direction: { type: string, enum: [incoming, outgoing] }
+        createdAt: { type: string, format: date-time }
+
+    PokeDeliveryStatus:
+      type: string
+      enum: [pending, fired, deviceNotConnected, notAllowed, muted]
+      description: >
+        `pending`: accepted and pushed, but no device has acked yet — this is
+        the status every poke is created with. Every other value is terminal
+        and is only ever set by `POST /pokes/{pokeId}/ack`. `fired`: reached
+        the device and actuated it. `deviceNotConnected`: push arrived but the
+        recipient's Pavlok wasn't connected. `notAllowed`: server-side
+        permission re-check rejected it (should be rare — the composer
+        client-clamps first). `muted`: recipient had "Do not disturb incoming
+        pokes" on.
+
+
+        Clients should treat a `pending` poke older than a few minutes as
+        undelivered: iOS gives no delivery guarantee for the silent push, so
+        an ack may simply never arrive.
+
+    PokeEvent:
+      type: object
+      required: [id, direction, friendHandle, friendDisplayName, stimulus, status, createdAt]
+      properties:
+        id: { type: string, format: uuid }
+        direction: { type: string, enum: [sent, received] }
+        friendHandle: { type: string }
+        friendDisplayName: { type: string }
+        stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+        status: { $ref: '#/components/schemas/PokeDeliveryStatus' }
+        createdAt: { type: string, format: date-time }
+
+    PokePushPayload:
+      type: object
+      description: >
+        Not a REST resource — this is the shape of the `"poke"` object inside
+        the APNs payloads `POST /pokes` triggers. Self-contained (the exact
+        stimulus to fire, sender name for the alert text) so the background
+        silent-push handler never needs a round-trip API call before it can
+        act, given iOS's tight execution budget for those.
+        See `PokePushPayload(userInfo:)` in the mobile client.
+
+
+        Two *separate* pushes are sent per poke. They cannot be combined:
+        iOS suppresses the background wake when an `alert` is present in the
+        same payload.
+
+
+        1. Alert push — `apns-push-type: alert`, priority 10. Guarantees the
+        recipient finds out. This is the payload in `example` below.
+
+
+        2. Silent push — `apns-push-type: background`, priority 5, and an
+        `aps` of exactly `{"content-available": 1}` with the same `type` and
+        `poke` keys alongside it. Best effort: it may fire the stimulus
+        without the recipient touching anything, but iOS gives no
+        delivery-time guarantee and throttles these aggressively.
+      required: [pokeID, senderHandle, senderDisplayName, stimulus]
+      properties:
+        pokeID: { type: string, format: uuid }
+        senderHandle: { type: string }
+        senderDisplayName: { type: string }
+        stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+      example:
+        aps:
+          alert:
+            title: Alice
+            body: zapped you!
+          sound: default
+        type: poke
+        poke:
+          pokeID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          senderHandle: alice
+          senderDisplayName: Alice
+          stimulus: { kind: zap, intensity: 30, repetitions: 1 }
+
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }

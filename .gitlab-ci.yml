@@ -1,0 +1,89 @@
+# Peelco GitLab CI — jolt-server.
+stages:
+  - install
+  - check
+  - build
+
+variables:
+  PNPM_VERSION: "10.33.0"
+  NODE_IMAGE: "node:22-alpine"
+
+.node:
+  image: $NODE_IMAGE
+  before_script:
+    - corepack enable
+    - corepack prepare pnpm@$PNPM_VERSION --activate
+    - pnpm config set store-dir .pnpm-store
+  cache:
+    key:
+      files:
+        - pnpm-lock.yaml
+    paths:
+      - .pnpm-store
+
+install:
+  stage: install
+  extends: .node
+  script:
+    - pnpm install --frozen-lockfile
+  artifacts:
+    paths:
+      - node_modules
+    expire_in: 1 day
+
+lint:
+  stage: check
+  extends: .node
+  needs: [install]
+  script:
+    - pnpm lint
+
+typecheck:
+  stage: check
+  extends: .node
+  needs: [install]
+  script:
+    - pnpm generate-routes
+    - pnpm typecheck
+
+# Fails when openapi/jolt-v1.yaml and src/api/schemas.ts disagree about
+# component shapes, enum members, or which paths have route files.
+openapi:
+  stage: check
+  extends: .node
+  needs: [install]
+  script:
+    - pnpm openapi:check
+
+test:
+  stage: check
+  extends: .node
+  needs: [install]
+  script:
+    - pnpm test
+
+build:
+  stage: build
+  extends: .node
+  needs: [lint, typecheck, openapi, test]
+  script:
+    - pnpm build
+  artifacts:
+    paths:
+      - .output
+    expire_in: 7 days
+
+container:
+  stage: build
+  needs: [lint, typecheck, openapi, test]
+  image: docker:27
+  services:
+    - docker:27-dind
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+  script:
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$CI_REGISTRY_IMAGE:latest" .
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
