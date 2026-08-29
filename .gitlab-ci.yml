@@ -125,9 +125,9 @@ deploy to test:
   script:
     - export JOLT_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
     - cd deploy
-    - docker compose -f docker-compose.yml -f docker-compose.test.yml pull
+    - docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.test-dbaccess.yml pull
     # `up -d` runs `migrate` to completion before starting `app`, so a schema
     # change is applied by the same deploy that ships the code needing it.
-    - docker compose -f docker-compose.yml -f docker-compose.test.yml -p jolt_test up -d --remove-orphans
+    - docker compose -f docker-compose.yml -f docker-compose.test.yml -f docker-compose.test-dbaccess.yml -p jolt_test up -d --remove-orphans
   after_script:
     - docker image prune -f

@@ -1,0 +1,18 @@
+# Temporary: publishes the test Postgres on the LAN so it can be inspected
+# from a workstation while debugging.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.test.yml \
+#                  -f docker-compose.test-dbaccess.yml -p jolt_test up -d
+#
+# 7684 rather than 5432 because the shared deploy host already runs a Postgres
+# on the default port — publishing 5432 here is what previously broke the
+# deploy with "Bind for 0.0.0.0:5432 failed: port is already allocated".
+#
+# This binds on all interfaces, so the database is reachable by anything on
+# the LAN. It is deliberately a separate overlay: drop it from the deploy job
+# in .gitlab-ci.yml and redeploy to withdraw the port again (Compose appends
+# port sequences, so an overlay can never remove one).
+services:
+  db:
+    ports:
+      - "${POSTGRES_LAN_PORT:-7684}:5432"

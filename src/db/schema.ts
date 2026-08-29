@@ -88,6 +88,16 @@ export const session = pgTable("session", {
 
 export const account = pgTable("account", {
   id: text("id").primaryKey(),
+  /**
+   * Required by Better Auth >= 1.7. Its absence made *every* sign-up fail
+   * with `The field "issuer" does not exist in the "account" Drizzle schema`,
+   * a 500 from both /api/v1/auth/signup and the web form — so nobody could
+   * register, and the app reported a stale token as an expired session.
+   *
+   * Nullable in the database: rows written by 1.6.x predate the column, and
+   * Better Auth fills it in on every account it creates from now on.
+   */
+  issuer: text("issuer"),
   accountId: text("account_id").notNull(),
   providerId: text("provider_id").notNull(),
   userId: text("user_id")
