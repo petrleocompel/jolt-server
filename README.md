@@ -31,7 +31,7 @@ adapts it to the `{ token, user }` shape the contract specifies.
 
 ```bash
 cp .env.example .env          # then fill BETTER_AUTH_SECRET at minimum
-docker compose -f deploy/docker-compose.yml up -d db
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d db
 pnpm install
 pnpm db:generate && pnpm db:migrate
 pnpm db:seed-admin            # needs ADMIN_EMAIL + ADMIN_PASSWORD

@@ -1,0 +1,12 @@
+# Local development overlay: makes Postgres reachable from the host so
+# drizzle-kit, psql and `pnpm dev` can connect to it.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d db
+#
+# Publishing is opt-in rather than default because a published port cannot be
+# withdrawn by a later overlay — Compose appends sequences — and the shared
+# deploy host already runs a Postgres on 5432.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
