@@ -102,8 +102,10 @@ container:
 deploy to test:
   stage: deploy
   image: docker:27-cli
+  # Runner 3, "Test server deploy", is tagged [test, …]. Requiring a
+  # `jolt` tag as well matched no runner at all, so the job sat pending
+  # forever rather than failing visibly.
   tags:
-    - jolt
     - test
   needs:
     - container
