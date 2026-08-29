@@ -1,0 +1,26 @@
+# Peelco test deploy. TLS is handled by the shared Traefik (via traefik-kop),
+# which reads the labels below off this host, so no Caddy here.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.test.yml up -d
+#
+# traefik-kop needs a published host port to route to, so the app is bound on
+# 7385 and the loadbalancer port matches it.
+services:
+  app:
+    image: ${JOLT_IMAGE:?set JOLT_IMAGE to the registry tag}
+    ports:
+      - "7385:3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jolt.rule=Host(`${APP_HOST:-jolt.example.com}`)"
+      - "traefik.http.routers.jolt.tls=true"
+      - "traefik.http.routers.jolt.tls.certresolver=http"
+      - "traefik.http.routers.jolt.entrypoints=https"
+      - "traefik.http.services.jolt.loadbalancer.server.scheme=http"
+      - "traefik.http.services.jolt.loadbalancer.server.port=7385"
+
+  migrate:
+    image: ${JOLT_IMAGE:?set JOLT_IMAGE to the registry tag}
+
+  cron:
+    image: ${JOLT_IMAGE:?set JOLT_IMAGE to the registry tag}

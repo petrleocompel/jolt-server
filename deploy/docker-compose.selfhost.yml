@@ -1,0 +1,27 @@
+# Self-hosting overlay: terminates TLS with Caddy and gets certificates from
+# Let's Encrypt automatically. Use this when Jolt is the only thing on the box.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.selfhost.yml up -d
+#
+# If you already run a reverse proxy, skip this file and point your proxy at
+# the app container instead — see docs/SELFHOSTING.md.
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST to your domain}
+    depends_on:
+      app:
+        condition: service_healthy
+
+volumes:
+  caddydata:
+  caddyconfig:

@@ -6,6 +6,10 @@ permissions, and pokes delivered over APNs.
 
 TanStack Start (SSR web UI + API routes), Drizzle/Postgres, Better Auth.
 
+**Running your own?** See [docs/SELFHOSTING.md](docs/SELFHOSTING.md). The iOS
+app takes a server URL in Settings, so it can point at your instance instead of
+ours.
+
 ## The contract comes first
 
 `openapi/jolt-v1.yaml` is canonical. The mobile client's `MockSocialBackend`
@@ -105,7 +109,7 @@ product decision rules out.
 ## Deploy
 
 ```bash
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.prod.yml up -d
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.selfhost.yml up -d
 ```
 
 Requires `POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`, `APP_HOST`, and the

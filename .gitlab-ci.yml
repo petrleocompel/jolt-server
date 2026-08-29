@@ -3,6 +3,7 @@ stages:
   - install
   - check
   - build
+  - deploy
 
 variables:
   NODE_IMAGE: "node:22-alpine"
@@ -85,3 +86,46 @@ container:
     - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$CI_REGISTRY_IMAGE:latest" .
     - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
     - docker push "$CI_REGISTRY_IMAGE:latest"
+
+# Deploys to the box behind the `test` runner. The image is pulled from the
+# registry rather than rebuilt here, so what ships is exactly the artefact the
+# `container` job produced and pushed.
+#
+# TLS is handled by the shared Traefik via traefik-kop, which reads the labels
+# in deploy/docker-compose.test.yml off this host — see that file. The app
+# binds host port 7385.
+#
+# Required CI/CD variables (Settings -> CI/CD -> Variables, masked):
+#   BETTER_AUTH_SECRET   openssl rand -base64 48
+#   POSTGRES_PASSWORD
+#   APNS_KEY_ID, APNS_KEY_P8   optional; without them pokes are logged, not sent
+deploy to test:
+  stage: deploy
+  image: docker:27-cli
+  tags:
+    - jolt
+    - test
+  needs:
+    - container
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      when: on_success
+    - when: never
+  environment:
+    name: test
+    url: https://jolt.example.com
+  variables:
+    APP_HOST: jolt.example.com
+  before_script:
+    - export DOCKER_CLIENT_TIMEOUT=300
+    - export COMPOSE_HTTP_TIMEOUT=300
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+  script:
+    - export JOLT_IMAGE="$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - cd deploy
+    - docker compose -f docker-compose.yml -f docker-compose.test.yml pull
+    # `up -d` runs `migrate` to completion before starting `app`, so a schema
+    # change is applied by the same deploy that ships the code needing it.
+    - docker compose -f docker-compose.yml -f docker-compose.test.yml -p jolt_test up -d --remove-orphans
+  after_script:
+    - docker image prune -f

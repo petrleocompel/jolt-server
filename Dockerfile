@@ -21,6 +21,10 @@ COPY --from=build /app/drizzle ./drizzle
 COPY --from=build /app/openapi ./openapi
 COPY --from=build /app/scripts ./scripts
 COPY --from=build /app/src ./src
+# drizzle.config.ts and tsconfig.json are needed by `pnpm db:migrate`, which
+# the compose `migrate` service runs inside this image before the API starts.
+COPY --from=build /app/drizzle.config.ts ./
+COPY --from=build /app/tsconfig.json ./
 COPY package.json ./
 EXPOSE 3000
 CMD ["node", ".output/server/index.mjs"]
