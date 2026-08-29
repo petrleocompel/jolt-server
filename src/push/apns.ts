@@ -30,9 +30,98 @@ export interface ApnsConfig {
   environment: "sandbox" | "production";
 }
 
-interface ApnsSendOutcome {
+export interface ApnsSendOutcome {
   status: number;
   reason?: string;
+}
+
+/**
+ * Maps an APNs HTTP response onto our retry taxonomy. Pure and exported so the
+ * rules (410 and 400/BadDeviceToken are both terminal; 429 and 5xx are worth
+ * retrying; anything else is our bug) are unit-testable without a live session.
+ */
+export function classifyApnsOutcome(outcome: ApnsSendOutcome): PushFailureReason | undefined {
+  if (outcome.status >= 200 && outcome.status < 300) return undefined;
+  // 410 Unregistered, and 400/BadDeviceToken, both mean: stop using this token.
+  if (outcome.status === 410) return "unregistered";
+  if (outcome.status === 400 && outcome.reason === "BadDeviceToken") return "unregistered";
+  if (outcome.status === 429 || outcome.status >= 500) return "transient";
+  return "rejected";
+}
+
+/**
+ * The two JSON bodies for one poke. The silent body deliberately omits `alert`
+ * — iOS drops the background wake if an `alert` is present, which is the whole
+ * reason a poke is two pushes rather than one.
+ */
+export function buildPokePayloadBodies(payload: PokePushPayload): {
+  alertBody: string;
+  silentBody: string;
+} {
+  const alert = alertTextFor(payload);
+  const alertBody = JSON.stringify({
+    aps: { alert: { title: alert.title, body: alert.body }, sound: "default" },
+    type: "poke",
+    poke: payload,
+  });
+  const silentBody = JSON.stringify({
+    aps: { "content-available": 1 },
+    type: "poke",
+    poke: payload,
+  });
+  return { alertBody, silentBody };
+}
+
+/**
+ * Sends the alert push, then — only when the token is still good — the silent
+ * push, folding the pair into one result keyed on the alert (the push that
+ * guarantees the recipient finds out). Extracted from the class, and taking
+ * `sendOne` as a parameter, so the ordering and the skip-silent-when-
+ * unregistered rule are testable with a fake transport.
+ */
+export async function deliverPokeToTarget(
+  target: PushTarget,
+  bodies: { alertBody: string; silentBody: string },
+  base: Record<string, string | number>,
+  pokeID: string,
+  sendOne: (
+    deviceToken: string,
+    body: string,
+    headers: Record<string, string | number>,
+  ) => Promise<ApnsSendOutcome>,
+): Promise<PushResult> {
+  try {
+    const alertOutcome = await sendOne(target.token, bodies.alertBody, {
+      ...base,
+      // apns-id must be unique per push, so only the alert carries the poke
+      // id; reusing it would let APNs collapse the two.
+      "apns-id": pokeID,
+      "apns-push-type": "alert",
+      "apns-priority": 10,
+    });
+
+    const reason = classifyApnsOutcome(alertOutcome);
+
+    // No point spending a request on a device APNs just told us is gone.
+    if (reason !== "unregistered") {
+      await sendOne(target.token, bodies.silentBody, {
+        ...base,
+        "apns-push-type": "background",
+        "apns-priority": 5,
+      }).catch(() => undefined);
+    }
+
+    return reason
+      ? { targetId: target.id, ok: false, reason, detail: alertOutcome.reason }
+      : { targetId: target.id, ok: true };
+  } catch (error) {
+    return {
+      targetId: target.id,
+      ok: false,
+      reason: "transient" satisfies PushFailureReason,
+      detail: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export class ApnsPushSender implements PushSender {
@@ -123,15 +212,6 @@ export class ApnsPushSender implements PushSender {
     });
   }
 
-  private classify(outcome: ApnsSendOutcome): PushResult["reason"] | undefined {
-    if (outcome.status >= 200 && outcome.status < 300) return undefined;
-    // 410 Unregistered, and 400/BadDeviceToken, both mean: stop using this token.
-    if (outcome.status === 410) return "unregistered";
-    if (outcome.status === 400 && outcome.reason === "BadDeviceToken") return "unregistered";
-    if (outcome.status === 429 || outcome.status >= 500) return "transient";
-    return "rejected";
-  }
-
   async sendPoke(
     targets: Array<PushTarget>,
     payload: PokePushPayload,
@@ -139,20 +219,7 @@ export class ApnsPushSender implements PushSender {
     if (targets.length === 0) return [];
 
     const token = await this.providerToken();
-    const alert = alertTextFor(payload);
-
-    const alertBody = JSON.stringify({
-      aps: { alert: { title: alert.title, body: alert.body }, sound: "default" },
-      type: "poke",
-      poke: payload,
-    });
-    // Note the absence of `alert` here — including both in one payload makes
-    // iOS drop the background wake.
-    const silentBody = JSON.stringify({
-      aps: { "content-available": 1 },
-      type: "poke",
-      poke: payload,
-    });
+    const bodies = buildPokePayloadBodies(payload);
 
     const base = {
       authorization: `bearer ${token}`,
@@ -162,41 +229,11 @@ export class ApnsPushSender implements PushSender {
     };
 
     return Promise.all(
-      targets.map(async (target): Promise<PushResult> => {
-        try {
-          const alertOutcome = await this.send(target.token, alertBody, {
-            ...base,
-            // apns-id must be unique per push, so only the alert carries the
-            // poke id; reusing it would let APNs collapse the two.
-            "apns-id": payload.pokeID,
-            "apns-push-type": "alert",
-            "apns-priority": 10,
-          });
-
-          const reason = this.classify(alertOutcome);
-
-          // Only chase the silent push when the token is still good — no point
-          // spending a request on a device APNs just told us is gone.
-          if (reason !== "unregistered") {
-            await this.send(target.token, silentBody, {
-              ...base,
-              "apns-push-type": "background",
-              "apns-priority": 5,
-            }).catch(() => undefined);
-          }
-
-          return reason
-            ? { targetId: target.id, ok: false, reason, detail: alertOutcome.reason }
-            : { targetId: target.id, ok: true };
-        } catch (error) {
-          return {
-            targetId: target.id,
-            ok: false,
-            reason: "transient" satisfies PushFailureReason,
-            detail: error instanceof Error ? error.message : String(error),
-          };
-        }
-      }),
+      targets.map((target) =>
+        deliverPokeToTarget(target, bodies, base, payload.pokeID, (deviceToken, body, headers) =>
+          this.send(deviceToken, body, headers),
+        ),
+      ),
     );
   }
 
