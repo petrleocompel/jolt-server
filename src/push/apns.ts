@@ -6,8 +6,9 @@ import type {
   PushResult,
   PushSender,
   PushTarget,
+  TestPushPayload,
 } from "#/push/types";
-import { alertTextFor } from "#/push/types";
+import { alertTextFor, testAlertTextFor } from "#/push/types";
 
 const HOSTS = {
   sandbox: "https://api.sandbox.push.apple.com",
@@ -73,17 +74,40 @@ export function buildPokePayloadBodies(payload: PokePushPayload): {
 }
 
 /**
+ * The same pair for a diagnostic push. `type: "test"` rather than `"poke"`
+ * so the client acks it to the test endpoint — there is no `poke_event` row
+ * for it to ack against.
+ */
+export function buildTestPayloadBodies(payload: TestPushPayload): {
+  alertBody: string;
+  silentBody: string;
+} {
+  const alert = testAlertTextFor(payload);
+  const alertBody = JSON.stringify({
+    aps: { alert: { title: alert.title, body: alert.body }, sound: "default" },
+    type: "test",
+    test: payload,
+  });
+  const silentBody = JSON.stringify({
+    aps: { "content-available": 1 },
+    type: "test",
+    test: payload,
+  });
+  return { alertBody, silentBody };
+}
+
+/**
  * Sends the alert push, then — only when the token is still good — the silent
  * push, folding the pair into one result keyed on the alert (the push that
  * guarantees the recipient finds out). Extracted from the class, and taking
  * `sendOne` as a parameter, so the ordering and the skip-silent-when-
  * unregistered rule are testable with a fake transport.
  */
-export async function deliverPokeToTarget(
+export async function deliverToTarget(
   target: PushTarget,
   bodies: { alertBody: string; silentBody: string },
   base: Record<string, string | number>,
-  pokeID: string,
+  apnsID: string,
   sendOne: (
     deviceToken: string,
     body: string,
@@ -93,9 +117,9 @@ export async function deliverPokeToTarget(
   try {
     const alertOutcome = await sendOne(target.token, bodies.alertBody, {
       ...base,
-      // apns-id must be unique per push, so only the alert carries the poke
-      // id; reusing it would let APNs collapse the two.
-      "apns-id": pokeID,
+      // apns-id must be unique per push, so only the alert carries the
+      // poke/test id; reusing it would let APNs collapse the two.
+      "apns-id": apnsID,
       "apns-push-type": "alert",
       "apns-priority": 10,
     });
@@ -212,28 +236,53 @@ export class ApnsPushSender implements PushSender {
     });
   }
 
+  private async baseHeaders(): Promise<Record<string, string | number>> {
+    return {
+      authorization: `bearer ${await this.providerToken()}`,
+      "apns-topic": this.config.bundleId,
+      // A poke is worthless if it arrives an hour late, and a test push the
+      // user is watching for even more so.
+      "apns-expiration": Math.floor(Date.now() / 1000) + 300,
+    };
+  }
+
   async sendPoke(
     targets: Array<PushTarget>,
     payload: PokePushPayload,
   ): Promise<Array<PushResult>> {
     if (targets.length === 0) return [];
 
-    const token = await this.providerToken();
     const bodies = buildPokePayloadBodies(payload);
-
-    const base = {
-      authorization: `bearer ${token}`,
-      "apns-topic": this.config.bundleId,
-      // A poke is worthless if it arrives an hour late.
-      "apns-expiration": Math.floor(Date.now() / 1000) + 300,
-    };
+    const base = await this.baseHeaders();
 
     return Promise.all(
       targets.map((target) =>
-        deliverPokeToTarget(target, bodies, base, payload.pokeID, (deviceToken, body, headers) =>
+        deliverToTarget(target, bodies, base, payload.pokeID, (deviceToken, body, headers) =>
           this.send(deviceToken, body, headers),
         ),
       ),
+    );
+  }
+
+  async sendTest(
+    targets: Array<PushTarget>,
+    payload: Omit<TestPushPayload, "deviceID">,
+  ): Promise<Array<PushResult>> {
+    if (targets.length === 0) return [];
+
+    const base = await this.baseHeaders();
+
+    return Promise.all(
+      targets.map((target) => {
+        // Per-target bodies: each device is told its own id so the ack it
+        // sends back can be attributed to the right row.
+        const bodies = buildTestPayloadBodies({ ...payload, deviceID: target.id });
+        // apns-id must be a unique UUID per push and the same test fans out to
+        // several devices, so the test id alone would collide.
+        return deliverToTarget(target, bodies, base, crypto.randomUUID(), (deviceToken, body, headers) =>
+          this.send(deviceToken, body, headers),
+        );
+      }),
     );
   }
 

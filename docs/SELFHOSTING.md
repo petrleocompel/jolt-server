@@ -119,6 +119,13 @@ If you build the app yourself under your own team, it is your identifier, not
 
 Restart: `docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.selfhost.yml up -d`.
 
+To check it worked, sign in on the web and open **Dashboard → Devices**, then
+"Send to all my devices". The row turns into "delivered in 1.2 s" once the
+phone confirms — if it stays on "waiting for the device", the push left the
+server but never arrived, which usually means `APNS_ENV` disagrees with the
+build on the phone (a debug build from Xcode is `sandbox`, TestFlight and the
+App Store are `production`) or `APNS_BUNDLE_ID` is wrong.
+
 ## Upgrading
 
 ```bash

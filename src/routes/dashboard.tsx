@@ -15,6 +15,7 @@ const TABS = [
   { to: "/dashboard/permissions", label: "Permissions" },
   { to: "/dashboard/activity", label: "Activity" },
   { to: "/dashboard/invite", label: "Invite" },
+  { to: "/dashboard/devices", label: "Devices" },
 ] as const;
 
 function DashboardShell() {

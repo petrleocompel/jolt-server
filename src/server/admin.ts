@@ -8,8 +8,7 @@ import { deviceToken, pokeEvent, user as userTable } from "#/db/schema";
 import { StimulusConfig } from "#/api/schemas";
 import { requireAdminOrRedirect, requireUserOrRedirect } from "#/server/session.server";
 import { statusBreakdown } from "#/services/pokes";
-import { pushSender } from "#/push";
-import { activeTargets, markUnregistered } from "#/services/devices";
+import { sendTestPush } from "#/services/push-test";
 import { hasApnsCredentials } from "#/env";
 
 /** Route guard for the /admin shell — redirects non-admins away. */
@@ -112,29 +111,18 @@ export const fetchAllDevices = createServerFn({ method: "GET" }).handler(async (
  * checks. Admin-only, and the whole point is diagnosing APNs delivery when
  * the real path reports `pending` forever.
  */
-export const sendTestPoke = createServerFn({ method: "POST" })
-  .validator(z.object({ userId: z.string(), stimulus: StimulusConfig }))
+/**
+ * Support tool: push to someone else's devices to prove their notifications
+ * work. Same service as the user-facing /dashboard/devices test, so there is
+ * only one thing to keep working — it just isn't scoped to the caller.
+ */
+export const sendTestPushToUser = createServerFn({ method: "POST" })
+  .validator(
+    z.object({ userId: z.string(), stimulus: StimulusConfig.optional() }),
+  )
   .handler(async ({ data }) => {
-    const admin = await requireAdminOrRedirect();
-    const targets = await activeTargets(data.userId);
-    if (targets.length === 0) return { sent: 0, dead: 0, message: "No active devices." };
-
-    const results = await pushSender().sendPoke(targets, {
-      pokeID: crypto.randomUUID(),
-      senderHandle: admin.handle,
-      senderDisplayName: `${admin.name} (test)`,
-      stimulus: data.stimulus,
-    });
-    const dead = results.filter((r) => r.reason === "unregistered").map((r) => r.targetId);
-    await markUnregistered(dead);
-
-    return {
-      sent: results.filter((r) => r.ok).length,
-      dead: dead.length,
-      message: hasApnsCredentials
-        ? "Sent via APNs."
-        : "APNs not configured — logged by ConsolePushSender instead.",
-    };
+    await requireAdminOrRedirect();
+    return sendTestPush({ userId: data.userId, stimulus: data.stimulus, source: "web" });
   });
 
 export const qrForInvite = createServerFn({ method: "GET" }).handler(async () => {

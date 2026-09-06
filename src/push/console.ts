@@ -1,5 +1,11 @@
-import type { PokePushPayload, PushResult, PushSender, PushTarget } from "#/push/types";
-import { alertTextFor } from "#/push/types";
+import type {
+  PokePushPayload,
+  PushResult,
+  PushSender,
+  PushTarget,
+  TestPushPayload,
+} from "#/push/types";
+import { alertTextFor, testAlertTextFor } from "#/push/types";
 
 /**
  * Dev/test default. Logs what would have gone to Apple so the whole poke flow
@@ -20,6 +26,26 @@ export class ConsolePushSender implements PushSender {
       `[push] poke ${payload.pokeID} — "${title}: ${body}" ` +
         `(${kind} ${intensity}% x${repetitions}) -> ${targets.length} device(s); ` +
         `would send 1 alert + 1 background push each`,
+    );
+    for (const target of targets) {
+      this.log(`[push]   device ${target.id} token ${target.token.slice(0, 12)}…`);
+    }
+
+    return targets.map((target) => ({ targetId: target.id, ok: true }));
+  }
+
+  async sendTest(
+    targets: Array<PushTarget>,
+    payload: Omit<TestPushPayload, "deviceID">,
+  ): Promise<Array<PushResult>> {
+    const { title, body } = testAlertTextFor(payload);
+    const stimulus = payload.stimulus
+      ? `${payload.stimulus.kind} ${payload.stimulus.intensity}% x${payload.stimulus.repetitions}`
+      : "notification only";
+
+    this.log(
+      `[push] test ${payload.testID} from ${payload.source} — "${title}: ${body}" ` +
+        `(${stimulus}) -> ${targets.length} device(s)`,
     );
     for (const target of targets) {
       this.log(`[push]   device ${target.id} token ${target.token.slice(0, 12)}…`);

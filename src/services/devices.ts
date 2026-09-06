@@ -1,6 +1,8 @@
-import { and, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { db } from "#/db";
 import { deviceToken } from "#/db/schema";
+import { ApiError } from "#/api/errors";
+import type { Device } from "#/api/schemas";
 import type { PushTarget } from "#/push";
 
 /**
@@ -29,6 +31,55 @@ export async function activeTargets(userId: string): Promise<Array<PushTarget>> 
     .select({ id: deviceToken.id, token: deviceToken.token })
     .from(deviceToken)
     .where(and(eq(deviceToken.userId, userId), isNull(deviceToken.disabledAt)));
+  return rows;
+}
+
+/**
+ * The signed-in user's own devices, for the "test my notifications" screens.
+ * Only the last 8 characters of the token are exposed — enough for a phone to
+ * recognise itself in the list, useless to anyone who shouldn't have it.
+ */
+export async function listDevices(userId: string): Promise<Array<Device>> {
+  const rows = await db
+    .select()
+    .from(deviceToken)
+    .where(eq(deviceToken.userId, userId))
+    .orderBy(desc(deviceToken.lastSeenAt));
+
+  return rows.map((row) => ({
+    id: row.id,
+    platform: row.platform,
+    tokenSuffix: row.token.slice(-8),
+    isActive: row.disabledAt === null,
+    createdAt: row.createdAt.toISOString(),
+    lastSeenAt: row.lastSeenAt.toISOString(),
+  }));
+}
+
+/**
+ * Push targets for one test send: a single device when `deviceId` is given,
+ * every live one otherwise. A device id that isn't yours 404s exactly like
+ * one that doesn't exist — device ids are not something to probe for.
+ */
+export async function targetsFor(
+  userId: string,
+  deviceId?: string,
+): Promise<Array<PushTarget>> {
+  if (!deviceId) return activeTargets(userId);
+
+  const rows = await db
+    .select({ id: deviceToken.id, token: deviceToken.token })
+    .from(deviceToken)
+    .where(
+      and(
+        eq(deviceToken.id, deviceId),
+        eq(deviceToken.userId, userId),
+        isNull(deviceToken.disabledAt),
+      ),
+    )
+    .limit(1);
+
+  if (rows.length === 0) throw ApiError.notFound("No active device with that id.");
   return rows;
 }
 

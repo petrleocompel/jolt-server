@@ -1,13 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   buildPokePayloadBodies,
+  buildTestPayloadBodies,
   classifyApnsOutcome,
-  deliverPokeToTarget,
+  deliverToTarget,
 } from "#/push/apns";
 import { ConsolePushSender } from "#/push/console";
-import { alertTextFor } from "#/push/types";
+import { alertTextFor, testAlertTextFor } from "#/push/types";
 import type { ApnsSendOutcome } from "#/push/apns";
-import type { PokePushPayload, PushTarget } from "#/push/types";
+import type { PokePushPayload, PushTarget, TestPushPayload } from "#/push/types";
 
 const payload: PokePushPayload = {
   pokeID: "poke-1",
@@ -17,6 +18,13 @@ const payload: PokePushPayload = {
 };
 
 const target: PushTarget = { id: "device-1", token: "abc123deadbeef" };
+
+const testPayload: TestPushPayload = {
+  testID: "test-1",
+  deviceID: "device-1",
+  sentAt: "2026-09-07T10:15:00.000Z",
+  source: "web",
+};
 
 describe("alertTextFor", () => {
   it("maps each stimulus kind to its verb", () => {
@@ -74,7 +82,52 @@ describe("buildPokePayloadBodies", () => {
   });
 });
 
-describe("deliverPokeToTarget", () => {
+describe("testAlertTextFor", () => {
+  it("says delivery works when nothing will fire", () => {
+    expect(testAlertTextFor({})).toEqual({
+      title: "Jolt",
+      body: "Test notification — push delivery works.",
+    });
+  });
+
+  it("names the stimulus when one is coming", () => {
+    expect(
+      testAlertTextFor({ stimulus: { kind: "zap", intensity: 30, repetitions: 2 } }).body,
+    ).toBe("Delivery works — firing zap 30% x2.");
+    expect(
+      testAlertTextFor({ stimulus: { kind: "vibe", intensity: 20, repetitions: 1 } }).body,
+    ).toBe("Delivery works — firing vibe 20%.");
+  });
+});
+
+describe("buildTestPayloadBodies", () => {
+  it('marks the payload type "test", not "poke"', () => {
+    // The client routes on this: a test acks to /devices/test-push/{id}/ack
+    // and has no poke_event behind it.
+    const { alertBody, silentBody } = buildTestPayloadBodies(testPayload);
+    for (const body of [alertBody, silentBody]) {
+      const parsed = JSON.parse(body);
+      expect(parsed.type).toBe("test");
+      expect(parsed.poke).toBeUndefined();
+      expect(parsed.test).toEqual(testPayload);
+    }
+  });
+
+  it("keeps the alert off the silent body", () => {
+    const { alertBody, silentBody } = buildTestPayloadBodies(testPayload);
+    expect(JSON.parse(alertBody).aps.alert.title).toBe("Jolt");
+    expect(JSON.parse(silentBody).aps.alert).toBeUndefined();
+    expect(JSON.parse(silentBody).aps["content-available"]).toBe(1);
+  });
+
+  it("carries the stimulus through when one was asked for", () => {
+    const stimulus = { kind: "beep", intensity: 10, repetitions: 1 } as const;
+    const { alertBody } = buildTestPayloadBodies({ ...testPayload, stimulus });
+    expect(JSON.parse(alertBody).test.stimulus).toEqual(stimulus);
+  });
+});
+
+describe("deliverToTarget", () => {
   const bodies = buildPokePayloadBodies(payload);
   const base = { authorization: "bearer t", "apns-topic": "cz.peelco.jolt" };
 
@@ -87,7 +140,7 @@ describe("deliverPokeToTarget", () => {
       return { status: 200 } satisfies ApnsSendOutcome;
     });
 
-    const result = await deliverPokeToTarget(target, bodies, base, payload.pokeID, sendOne);
+    const result = await deliverToTarget(target, bodies, base, payload.pokeID, sendOne);
 
     expect(result).toEqual({ targetId: "device-1", ok: true });
     // Alert first (it is what guarantees delivery), then the silent wake.
@@ -105,7 +158,7 @@ describe("deliverPokeToTarget", () => {
   it("skips the silent push when the token is unregistered", async () => {
     const sendOne = vi.fn(async () => ({ status: 410 }) satisfies ApnsSendOutcome);
 
-    const result = await deliverPokeToTarget(target, bodies, base, payload.pokeID, sendOne);
+    const result = await deliverToTarget(target, bodies, base, payload.pokeID, sendOne);
 
     expect(sendOne).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ targetId: "device-1", ok: false, reason: "unregistered" });
@@ -117,7 +170,7 @@ describe("deliverPokeToTarget", () => {
       return { status: 200 } satisfies ApnsSendOutcome;
     });
 
-    const result = await deliverPokeToTarget(target, bodies, base, payload.pokeID, sendOne);
+    const result = await deliverToTarget(target, bodies, base, payload.pokeID, sendOne);
 
     expect(result).toEqual({ targetId: "device-1", ok: true });
   });
@@ -127,7 +180,7 @@ describe("deliverPokeToTarget", () => {
       throw new Error("network down");
     });
 
-    const result = await deliverPokeToTarget(target, bodies, base, payload.pokeID, sendOne);
+    const result = await deliverToTarget(target, bodies, base, payload.pokeID, sendOne);
 
     expect(result).toMatchObject({ ok: false, reason: "transient", detail: "network down" });
   });
@@ -150,5 +203,20 @@ describe("ConsolePushSender", () => {
   it("returns nothing for no targets", async () => {
     const sender = new ConsolePushSender(() => {});
     expect(await sender.sendPoke([], payload)).toEqual([]);
+  });
+
+  it("logs a test push without leaking the token either", async () => {
+    const lines: Array<string> = [];
+    const sender = new ConsolePushSender((message) => lines.push(message));
+
+    const results = await sender.sendTest([target], {
+      testID: "test-1",
+      sentAt: testPayload.sentAt,
+      source: "app",
+    });
+
+    expect(results).toEqual([{ targetId: "device-1", ok: true }]);
+    expect(lines.join("\n")).toContain("notification only");
+    expect(lines.join("\n")).not.toContain(target.token);
   });
 });

@@ -129,6 +129,141 @@ paths:
       responses:
         '204': { description: Registered }
 
+  /devices:
+    get:
+      tags: [devices]
+      summary: Your own registered devices
+      description: >
+        Backs the "test my notifications" screens — /dashboard/devices on the
+        web and Settings → Notifications in the app. Only the last 8
+        characters of each APNs token are returned, which is enough for a
+        phone to recognise itself in the list and useless to anybody else.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Device' }
+
+  /devices/test-push:
+    post:
+      tags: [devices]
+      summary: Send yourself a test push
+      description: >
+        Sends the same alert + silent pair a poke does, but with a
+        `type: "test"` payload (see `TestPushPayload`) and no `poke_event`
+        behind it — this exists to isolate APNs delivery from the friends and
+        permission logic.
+
+
+        Omit `stimulus` for a notification-only test: nothing fires on the
+        wearable, so delivery can be checked with no device connected. Include
+        it to exercise the whole chain down to the Pavlok.
+
+
+        Omit `deviceId` to fan out to every active device. Rate limited to one
+        test per 5 seconds per account.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                deviceId:
+                  type: string
+                  format: uuid
+                  description: Defaults to every active device.
+                stimulus:
+                  allOf: [{ $ref: '#/components/schemas/StimulusConfig' }]
+                  description: Omit for a notification-only test.
+      responses:
+        '200':
+          description: Handed to APNs. Delivery is confirmed by the device's ack.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestPushStatus' }
+        '404':
+          description: No registered devices, or no such device of yours
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Too many test pushes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /devices/test-push/{testID}:
+    get:
+      tags: [devices]
+      summary: State of a test push, including any acks so far
+      description: >
+        Poll this after sending to watch the device confirmations arrive.
+        Tests are held in memory for 10 minutes and then 404 — they are a live
+        diagnostic, not history.
+      parameters:
+        - name: testID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestPushStatus' }
+        '404':
+          description: Unknown or expired test
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /devices/test-push/{testID}/ack:
+    post:
+      tags: [devices]
+      summary: Confirm a test push arrived on this device
+      description: >
+        Sent by the client the moment it sees a `type: "test"` payload. `path`
+        says which iOS entry point saw it, so the alert and background halves
+        of the same test show up as separate confirmations. Idempotent per
+        (device, path).
+      parameters:
+        - name: testID
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                deviceId:
+                  type: string
+                  format: uuid
+                  description: Echoed from `deviceID` in the payload.
+                path: { type: string, enum: [alert, background, foreground] }
+                status:
+                  type: string
+                  enum: [fired, deviceNotConnected, notAllowed, muted]
+                  description: What happened when firing, for a test that carried a stimulus.
+      responses:
+        '200':
+          description: Recorded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestPushStatus' }
+        '404':
+          description: Unknown or expired test
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /friends:
     get:
       tags: [friends]
@@ -511,6 +646,121 @@ components:
           senderHandle: alice
           senderDisplayName: Alice
           stimulus: { kind: zap, intensity: 30, repetitions: 1 }
+
+    Device:
+      type: object
+      required: [id, platform, tokenSuffix, isActive, createdAt, lastSeenAt]
+      properties:
+        id: { type: string, format: uuid }
+        platform: { type: string, enum: [ios] }
+        tokenSuffix:
+          type: string
+          description: Last 8 characters of the APNs token, so a device can spot itself.
+        isActive:
+          type: boolean
+          description: False once APNs has reported the token unregistered.
+        createdAt: { type: string, format: date-time }
+        lastSeenAt: { type: string, format: date-time }
+
+    TestPushDeviceResult:
+      type: object
+      required: [deviceId, ok]
+      properties:
+        deviceId: { type: string, format: uuid }
+        ok: { type: boolean }
+        reason:
+          type: string
+          enum: [unregistered, transient, rejected]
+          description: Present only when `ok` is false.
+        detail:
+          type: string
+          description: APNs' own reason string, when it gave one.
+
+    TestPushAck:
+      type: object
+      required: [deviceId, path, receivedAt, elapsedMs]
+      properties:
+        deviceId:
+          type: string
+          format: uuid
+          nullable: true
+          description: Null when the client could not attribute the ack to a device.
+        path:
+          type: string
+          enum: [alert, background, foreground]
+          description: >
+            Which iOS entry point saw the push: the notification tap
+            (`alert`), the silent `content-available` wake (`background`), or
+            in-app foreground presentation (`foreground`).
+        status:
+          type: string
+          enum: [fired, deviceNotConnected, notAllowed, muted]
+        receivedAt: { type: string, format: date-time }
+        elapsedMs:
+          type: integer
+          minimum: 0
+          description: Round trip from send to confirmation.
+
+    TestPushStatus:
+      type: object
+      description: >
+        Live state of one test push. Held in the server's memory for 10
+        minutes rather than in the database — a test is only interesting while
+        you are watching it.
+      required: [testID, sentAt, source, apnsConfigured, devices, acks]
+      properties:
+        testID: { type: string, format: uuid }
+        sentAt: { type: string, format: date-time }
+        source: { type: string, enum: [web, app] }
+        stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+        apnsConfigured:
+          type: boolean
+          description: >
+            False when the server has no Apple credentials and is logging to
+            the console instead of delivering. A test will never be acked.
+        devices:
+          type: array
+          items: { $ref: '#/components/schemas/TestPushDeviceResult' }
+        acks:
+          type: array
+          items: { $ref: '#/components/schemas/TestPushAck' }
+
+    TestPushPayload:
+      type: object
+      description: >
+        Not a REST resource — the shape of the `"test"` object inside the APNs
+        payloads `POST /devices/test-push` triggers. Sent as the same alert +
+        silent pair as a poke (see `PokePushPayload`), so a test exercises
+        both delivery paths.
+
+
+        `type` is `"test"`, not `"poke"`: there is no `poke_event` row behind
+        it, so the client acks to `/devices/test-push/{testID}/ack` and — for
+        a payload with no `stimulus` — leaves the wearable alone entirely.
+      required: [testID, deviceID, sentAt, source]
+      properties:
+        testID: { type: string, format: uuid }
+        deviceID:
+          type: string
+          format: uuid
+          description: The device this copy went to. Echo it back in the ack.
+        sentAt: { type: string, format: date-time }
+        source: { type: string, enum: [web, app] }
+        stimulus:
+          allOf: [{ $ref: '#/components/schemas/StimulusConfig' }]
+          description: Absent for a notification-only test.
+      example:
+        aps:
+          alert:
+            title: Jolt
+            body: Test notification — push delivery works.
+          sound: default
+        type: test
+        test:
+          testID: 7c9e6679-7425-40de-944b-e07fc1f90ae7
+          deviceID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
+          sentAt: '2026-09-07T10:15:00Z'
+          source: web
 
     Error:
       type: object

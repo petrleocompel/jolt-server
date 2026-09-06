@@ -19,6 +19,26 @@ export interface PokePushPayload {
   stimulus: StimulusConfig;
 }
 
+/**
+ * The `test` object inside a diagnostic push — see `TestPushPayload` in
+ * openapi/jolt-v1.yaml. Sent by "test my notifications" from the web
+ * dashboard or the app's Settings screen, and deliberately NOT a poke: it has
+ * no `poke_event` row behind it, so the device acks it to
+ * `/devices/test-push/{testID}/ack` rather than to the poke ack endpoint.
+ *
+ * `stimulus` is what makes the caller's choice explicit — absent means
+ * "notification only, leave the wearable alone", present means "fire this
+ * too", so APNs delivery can be tested from a desk with no device connected.
+ */
+export interface TestPushPayload {
+  testID: string;
+  /** Which device this copy went to, echoed back in the ack. */
+  deviceID: string;
+  sentAt: string;
+  source: "web" | "app";
+  stimulus?: StimulusConfig;
+}
+
 export interface PushTarget {
   /** device_token.id, so a failure can be traced back to a row. */
   id: string;
@@ -54,6 +74,16 @@ export interface PushSender {
    * per-device failures; a rejected token is a result, not an exception.
    */
   sendPoke: (targets: Array<PushTarget>, payload: PokePushPayload) => Promise<Array<PushResult>>;
+
+  /**
+   * The same alert + silent pair for a diagnostic test push. Takes a payload
+   * *per target* rather than one for all of them, because each device is told
+   * its own `deviceID` so its ack can be attributed.
+   */
+  sendTest: (
+    targets: Array<PushTarget>,
+    payload: Omit<TestPushPayload, "deviceID">,
+  ) => Promise<Array<PushResult>>;
   close: () => Promise<void>;
 }
 
@@ -67,5 +97,19 @@ export function alertTextFor(payload: PokePushPayload): { title: string; body: s
   return {
     title: payload.senderDisplayName || `@${payload.senderHandle}`,
     body: verb[payload.stimulus.kind],
+  };
+}
+
+/** Alert text for a diagnostic push. Says which half of the test it is. */
+export function testAlertTextFor(payload: {
+  stimulus?: StimulusConfig;
+}): { title: string; body: string } {
+  if (!payload.stimulus) {
+    return { title: "Jolt", body: "Test notification — push delivery works." };
+  }
+  const { kind, intensity, repetitions } = payload.stimulus;
+  return {
+    title: "Jolt test",
+    body: `Delivery works — firing ${kind} ${intensity}%${repetitions > 1 ? ` x${repetitions}` : ""}.`,
   };
 }

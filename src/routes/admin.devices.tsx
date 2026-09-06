@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from "#/components/ui/table";
-import { fetchAllDevices, sendTestPoke } from "#/server/admin";
+import { fetchAllDevices, sendTestPushToUser } from "#/server/admin";
 
 export const Route = createFileRoute("/admin/devices")({
   loader: () => fetchAllDevices(),
@@ -27,10 +27,16 @@ function AdminDevices() {
     setBusyUser(userId);
     setMessage(null);
     try {
-      const result = await sendTestPoke({
+      const result = await sendTestPushToUser({
         data: { userId, stimulus: { kind: "vibe", intensity: 20, repetitions: 1 } },
       });
-      setMessage(`${result.message} Delivered to ${result.sent} device(s), ${result.dead} dead.`);
+      const accepted = result.devices.filter((device) => device.ok).length;
+      setMessage(
+        (result.apnsConfigured
+          ? "Sent via APNs."
+          : "APNs not configured — logged by ConsolePushSender instead.") +
+          ` Accepted for ${accepted} of ${result.devices.length} device(s).`,
+      );
       await router.invalidate();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Test poke failed.");
@@ -42,8 +48,9 @@ function AdminDevices() {
   return (
     <div className="flex flex-col gap-4">
       <p className="text-muted-foreground text-sm">
-        A test poke bypasses friendship and permission checks — it exists to isolate APNs delivery
-        from the permission logic.
+        A test push bypasses friendship and permission checks — it exists to isolate APNs
+        delivery from the permission logic. It fires a light vibe on the target's Pavlok. Users
+        can run the same test on themselves from their own Devices page.
       </p>
       {message && <p className="text-sm">{message}</p>}
 
@@ -81,7 +88,7 @@ function AdminDevices() {
                   disabled={Boolean(device.disabledAt) || busyUser === device.userId}
                   onClick={() => test(device.userId)}
                 >
-                  {busyUser === device.userId ? "Sending…" : "Test poke"}
+                  {busyUser === device.userId ? "Sending…" : "Test push"}
                 </Button>
               </TableCell>
             </TableRow>

@@ -95,6 +95,64 @@ export const PokePushPayload = z.object({
   stimulus: StimulusConfig,
 });
 
+/**
+ * One of the signed-in user's registered devices. Only the tail of the APNs
+ * token is exposed — enough for a phone to recognise itself in the list.
+ */
+export const Device = z.object({
+  id: z.uuid(),
+  platform: z.enum(["ios"]),
+  tokenSuffix: z.string(),
+  isActive: z.boolean(),
+  createdAt: z.iso.datetime(),
+  lastSeenAt: z.iso.datetime(),
+});
+
+/** Per-device outcome of a test push, as APNs reported it. */
+export const TestPushDeviceResult = z.object({
+  deviceId: z.uuid(),
+  ok: z.boolean(),
+  reason: z.enum(["unregistered", "transient", "rejected"]).optional(),
+  detail: z.string().optional(),
+});
+
+/**
+ * A device confirming a test push arrived. `path` says which iOS entry point
+ * saw it, so the alert and background halves can be told apart.
+ */
+export const TestPushAck = z.object({
+  deviceId: z.uuid().nullable(),
+  path: z.enum(["alert", "background", "foreground"]),
+  status: AckableStatus.optional(),
+  receivedAt: z.iso.datetime(),
+  elapsedMs: z.int().min(0),
+});
+
+/**
+ * The live state of one test push: what APNs said, plus whatever the devices
+ * have confirmed so far. Held in memory for ten minutes — see
+ * src/services/push-test.ts.
+ */
+export const TestPushStatus = z.object({
+  testID: z.uuid(),
+  sentAt: z.iso.datetime(),
+  source: z.enum(["web", "app"]),
+  stimulus: StimulusConfig.optional(),
+  /** False when the server is running the console stub instead of real APNs. */
+  apnsConfigured: z.boolean(),
+  devices: z.array(TestPushDeviceResult),
+  acks: z.array(TestPushAck),
+});
+
+/** The `test` object inside a diagnostic APNs payload (`type: "test"`). */
+export const TestPushPayload = z.object({
+  testID: z.uuid(),
+  deviceID: z.uuid(),
+  sentAt: z.iso.datetime(),
+  source: z.enum(["web", "app"]),
+  stimulus: StimulusConfig.optional(),
+});
+
 export const ApiError = z.object({ message: z.string() });
 
 // --- Request bodies ---------------------------------------------------------
@@ -137,6 +195,21 @@ export const SendPokeBody = z.object({
 
 export const AckBody = z.object({ status: AckableStatus });
 
+/**
+ * `deviceId` omitted means every active device; `stimulus` omitted means
+ * notification only, leaving the wearable alone.
+ */
+export const TestPushBody = z.object({
+  deviceId: z.uuid().optional(),
+  stimulus: StimulusConfig.optional(),
+});
+
+export const TestPushAckBody = z.object({
+  deviceId: z.uuid().optional(),
+  path: z.enum(["alert", "background", "foreground"]),
+  status: AckableStatus.optional(),
+});
+
 export const PokesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   before: z.iso.datetime().optional(),
@@ -157,6 +230,11 @@ export type AuthResponse = z.infer<typeof AuthResponse>;
 export type User = z.infer<typeof User>;
 export type PokePushPayload = z.infer<typeof PokePushPayload>;
 export type AckableStatus = z.infer<typeof AckableStatus>;
+export type Device = z.infer<typeof Device>;
+export type TestPushDeviceResult = z.infer<typeof TestPushDeviceResult>;
+export type TestPushAck = z.infer<typeof TestPushAck>;
+export type TestPushStatus = z.infer<typeof TestPushStatus>;
+export type TestPushPayload = z.infer<typeof TestPushPayload>;
 
 /** Named components, for the openapi:check drift comparison. */
 export const components = {
@@ -172,5 +250,10 @@ export const components = {
   PokeDeliveryStatus,
   PokeEvent,
   PokePushPayload,
+  Device,
+  TestPushDeviceResult,
+  TestPushAck,
+  TestPushStatus,
+  TestPushPayload,
   Error: ApiError,
 } as const;

@@ -76,6 +76,27 @@ when APNs is unconfigured.
 Tokens that come back `410 Unregistered` are marked disabled immediately and
 deleted by the `cull-dead-tokens` cron job.
 
+### Testing delivery
+
+`POST /api/v1/devices/test-push` sends the same alert + silent pair to your
+own devices, with a `type: "test"` payload instead of a poke — no friendship,
+no permission, no `poke_event`. Send `stimulus` to have the phone fire it too,
+or omit it for a notification-only test that needs no wearable connected.
+
+Users run it from **Dashboard → Devices**; the app has the same button under
+Settings → Notifications. Admins can push to *someone else's* devices from
+`/admin/devices` (same service, not scoped to the caller).
+
+The device confirms receipt with `POST /devices/test-push/{testID}/ack`, and
+`GET /devices/test-push/{testID}` reports the round trip, so "delivered in
+1.2 s" means the phone genuinely got it — not just that Apple accepted it.
+
+Tests are held **in memory for 10 minutes**, not in the database: a test is
+only interesting while you are watching it. That assumes a single `app`
+container (which `deploy/docker-compose.yml` runs); behind two replicas an ack
+would land on the instance that didn't send, and every test would look
+undelivered. Rate limited to one per 5 s per account.
+
 ## Poke lifecycle
 
 A poke is created `pending` and only the recipient's device moves it to a
