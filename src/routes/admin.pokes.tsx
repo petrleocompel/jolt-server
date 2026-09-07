@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "#/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   Table,
   TableBody,
@@ -19,35 +20,48 @@ function AdminPokes() {
   const pokes = Route.useLoaderData();
 
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>When</TableHead>
-          <TableHead>From</TableHead>
-          <TableHead>Stimulus</TableHead>
-          <TableHead>Status</TableHead>
-          <TableHead>Acked</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {pokes.map((poke) => (
-          <TableRow key={poke.id}>
-            <TableCell className="text-muted-foreground whitespace-nowrap">
-              {new Date(poke.createdAt).toLocaleString()}
-            </TableCell>
-            <TableCell>@{poke.senderHandle}</TableCell>
-            <TableCell>
-              {poke.kind} · {poke.intensity}% · x{poke.repetitions}
-            </TableCell>
-            <TableCell>
-              <Badge variant={poke.status === "fired" ? "default" : "outline"}>{poke.status}</Badge>
-            </TableCell>
-            <TableCell className="text-muted-foreground whitespace-nowrap">
-              {poke.ackedAt ? new Date(poke.ackedAt).toLocaleTimeString() : "—"}
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <Card>
+      <CardHeader>
+        <CardTitle>All pokes</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {pokes.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No pokes recorded.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>When</TableHead>
+                <TableHead>From</TableHead>
+                <TableHead>Stimulus</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Acked</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {pokes.map((poke) => (
+                <TableRow key={poke.id}>
+                  <TableCell className="text-muted-foreground whitespace-nowrap">
+                    {new Date(poke.createdAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell>@{poke.senderHandle}</TableCell>
+                  <TableCell>
+                    {poke.kind} · {poke.intensity}% · x{poke.repetitions}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={poke.status === "fired" ? "default" : "outline"}>
+                      {poke.status}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground whitespace-nowrap">
+                    {poke.ackedAt ? new Date(poke.ackedAt).toLocaleTimeString() : "—"}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }

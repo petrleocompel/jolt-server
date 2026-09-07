@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Badge } from "#/components/ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   Table,
   TableBody,
@@ -25,41 +26,49 @@ function statusVariant(status: PokeDeliveryStatus) {
 function Activity() {
   const events = Route.useLoaderData();
 
-  if (events.length === 0) {
-    return <p className="text-muted-foreground text-sm">No pokes yet.</p>;
-  }
-
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>When</TableHead>
-          <TableHead>Direction</TableHead>
-          <TableHead>Friend</TableHead>
-          <TableHead>Stimulus</TableHead>
-          <TableHead>Status</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {events.map((event) => (
-          <TableRow key={event.id}>
-            <TableCell className="text-muted-foreground whitespace-nowrap">
-              {new Date(event.createdAt).toLocaleString()}
-            </TableCell>
-            <TableCell>{event.direction}</TableCell>
-            <TableCell>
-              {event.friendDisplayName}{" "}
-              <span className="text-muted-foreground">@{event.friendHandle}</span>
-            </TableCell>
-            <TableCell>
-              {event.stimulus.kind} · {event.stimulus.intensity}% · x{event.stimulus.repetitions}
-            </TableCell>
-            <TableCell>
-              <Badge variant={statusVariant(event.status)}>{event.status}</Badge>
-            </TableCell>
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
+    <Card>
+      <CardHeader>
+        <CardTitle>Activity</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {events.length === 0 ? (
+          <p className="text-muted-foreground text-sm">No pokes yet.</p>
+        ) : (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>When</TableHead>
+                <TableHead>Direction</TableHead>
+                <TableHead>Friend</TableHead>
+                <TableHead>Stimulus</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {events.map((event) => (
+                <TableRow key={event.id}>
+                  <TableCell className="text-muted-foreground whitespace-nowrap">
+                    {new Date(event.createdAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell>{event.direction}</TableCell>
+                  <TableCell>
+                    {event.friendDisplayName}{" "}
+                    <span className="text-muted-foreground">@{event.friendHandle}</span>
+                  </TableCell>
+                  <TableCell>
+                    {event.stimulus.kind} · {event.stimulus.intensity}% · x
+                    {event.stimulus.repetitions}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={statusVariant(event.status)}>{event.status}</Badge>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        )}
+      </CardContent>
+    </Card>
   );
 }

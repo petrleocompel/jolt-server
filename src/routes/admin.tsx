@@ -1,45 +1,31 @@
-import { createFileRoute, Link, Outlet } from "@tanstack/react-router";
+import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { LayoutDashboard, Send, Smartphone, Users } from "lucide-react";
+import { AppShell } from "#/components/app-shell";
 import { assertAdmin } from "#/server/admin";
+import { fetchSession } from "#/server/session";
+import type { NavItem } from "#/components/app-shell";
 
 export const Route = createFileRoute("/admin")({
-  loader: () => assertAdmin(),
+  loader: async () => {
+    await assertAdmin();
+    return fetchSession();
+  },
   component: AdminShell,
 });
 
-const TABS = [
-  { to: "/admin", label: "Overview", exact: true },
-  { to: "/admin/users", label: "Users" },
-  { to: "/admin/pokes", label: "Pokes" },
-  { to: "/admin/devices", label: "Devices" },
-] as const;
+const NAV: Array<NavItem> = [
+  { to: "/admin", label: "Overview", icon: LayoutDashboard, exact: true },
+  { to: "/admin/users", label: "Users", icon: Users },
+  { to: "/admin/pokes", label: "Pokes", icon: Send },
+  { to: "/admin/devices", label: "Devices", icon: Smartphone },
+];
 
 function AdminShell() {
+  const session = Route.useLoaderData();
+
   return (
-    <div className="min-h-screen">
-      <header className="flex flex-wrap items-center gap-4 border-b px-6 py-4">
-        <Link to="/" className="font-semibold">
-          Jolt <span className="text-muted-foreground font-normal">admin</span>
-        </Link>
-        <nav className="flex flex-wrap gap-1">
-          {TABS.map((tab) => (
-            <Link
-              key={tab.to}
-              to={tab.to}
-              activeOptions={{ exact: "exact" in tab }}
-              activeProps={{ className: "bg-muted text-foreground" }}
-              className="text-muted-foreground rounded-md px-3 py-1.5 text-sm hover:bg-muted/60"
-            >
-              {tab.label}
-            </Link>
-          ))}
-        </nav>
-        <Link to="/dashboard" className="text-muted-foreground ml-auto text-sm underline">
-          Back to dashboard
-        </Link>
-      </header>
-      <main className="p-6">
-        <Outlet />
-      </main>
-    </div>
+    <AppShell nav={NAV} section="admin" session={session} title="Admin">
+      <Outlet />
+    </AppShell>
   );
 }

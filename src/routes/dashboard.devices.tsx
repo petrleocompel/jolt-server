@@ -171,45 +171,56 @@ function Devices() {
           itself on launch.
         </p>
       ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Token</TableHead>
-              <TableHead>Platform</TableHead>
-              <TableHead>Registered</TableHead>
-              <TableHead>Last seen</TableHead>
-              <TableHead>State</TableHead>
-              <TableHead />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {devices.map((device) => (
-              <TableRow key={device.id}>
-                <TableCell className="font-mono text-xs">…{device.tokenSuffix}</TableCell>
-                <TableCell>{device.platform}</TableCell>
-                <TableCell className="text-muted-foreground whitespace-nowrap">
-                  {new Date(device.createdAt).toLocaleDateString()}
-                </TableCell>
-                <TableCell className="text-muted-foreground whitespace-nowrap">
-                  {new Date(device.lastSeenAt).toLocaleString()}
-                </TableCell>
-                <TableCell>
-                  {device.isActive ? <Badge>active</Badge> : <Badge variant="outline">unregistered</Badge>}
-                </TableCell>
-                <TableCell>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={!device.isActive || busy !== null}
-                    onClick={() => void send(device.id)}
-                  >
-                    {busy === device.id ? "Sending…" : "Send test"}
-                  </Button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <Card>
+          <CardHeader>
+            <CardTitle>Your devices</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Token</TableHead>
+                  <TableHead>Platform</TableHead>
+                  <TableHead>Registered</TableHead>
+                  <TableHead>Last seen</TableHead>
+                  <TableHead>State</TableHead>
+                  <TableHead />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {devices.map((device) => (
+                  <TableRow key={device.id}>
+                    <TableCell className="font-mono text-xs">…{device.tokenSuffix}</TableCell>
+                    <TableCell>{device.platform}</TableCell>
+                    <TableCell className="text-muted-foreground whitespace-nowrap">
+                      {new Date(device.createdAt).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground whitespace-nowrap">
+                      {new Date(device.lastSeenAt).toLocaleString()}
+                    </TableCell>
+                    <TableCell>
+                      {device.isActive ? (
+                        <Badge>active</Badge>
+                      ) : (
+                        <Badge variant="outline">unregistered</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={!device.isActive || busy !== null}
+                        onClick={() => void send(device.id)}
+                      >
+                        {busy === device.id ? "Sending…" : "Send test"}
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       )}
     </div>
   );

@@ -2,6 +2,7 @@ import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { Badge } from "#/components/ui/badge";
 import { Button } from "#/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import {
   Table,
   TableBody,
@@ -54,47 +55,56 @@ function AdminDevices() {
       </p>
       {message && <p className="text-sm">{message}</p>}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>User</TableHead>
-            <TableHead>Token</TableHead>
-            <TableHead>Platform</TableHead>
-            <TableHead>Last seen</TableHead>
-            <TableHead>State</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {devices.map((device) => (
-            <TableRow key={device.id}>
-              <TableCell>@{device.handle}</TableCell>
-              <TableCell className="font-mono text-xs">{device.token.slice(0, 16)}…</TableCell>
-              <TableCell>{device.platform}</TableCell>
-              <TableCell className="text-muted-foreground whitespace-nowrap">
-                {new Date(device.lastSeenAt).toLocaleString()}
-              </TableCell>
-              <TableCell>
-                {device.disabledAt ? (
-                  <Badge variant="outline">unregistered</Badge>
-                ) : (
-                  <Badge>active</Badge>
-                )}
-              </TableCell>
-              <TableCell>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={Boolean(device.disabledAt) || busyUser === device.userId}
-                  onClick={() => test(device.userId)}
-                >
-                  {busyUser === device.userId ? "Sending…" : "Test push"}
-                </Button>
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+      <Card>
+        <CardHeader>
+          <CardTitle>All devices</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>User</TableHead>
+                <TableHead>Token</TableHead>
+                <TableHead>Platform</TableHead>
+                <TableHead>Last seen</TableHead>
+                <TableHead>State</TableHead>
+                <TableHead />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {devices.map((device) => (
+                <TableRow key={device.id}>
+                  <TableCell>@{device.handle}</TableCell>
+                  <TableCell className="font-mono text-xs">
+                    {device.token.slice(0, 16)}…
+                  </TableCell>
+                  <TableCell>{device.platform}</TableCell>
+                  <TableCell className="text-muted-foreground whitespace-nowrap">
+                    {new Date(device.lastSeenAt).toLocaleString()}
+                  </TableCell>
+                  <TableCell>
+                    {device.disabledAt ? (
+                      <Badge variant="outline">unregistered</Badge>
+                    ) : (
+                      <Badge>active</Badge>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={Boolean(device.disabledAt) || busyUser === device.userId}
+                      onClick={() => test(device.userId)}
+                    >
+                      {busyUser === device.userId ? "Sending…" : "Test push"}
+                    </Button>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
     </div>
   );
 }
