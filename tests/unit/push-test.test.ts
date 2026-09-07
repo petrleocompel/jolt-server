@@ -8,7 +8,7 @@ import type { PushResult, PushTarget } from "#/push/types";
  */
 
 const targetsFor = vi.fn<(userId: string, deviceId?: string) => Promise<Array<PushTarget>>>();
-const markUnregistered = vi.fn(async () => {});
+const markUnregistered = vi.fn<(ids: Array<string>) => Promise<void>>();
 const sendTest = vi.fn<() => Promise<Array<PushResult>>>();
 
 vi.mock("#/services/devices", () => ({
@@ -32,6 +32,7 @@ beforeEach(() => {
   resetPushTestStore();
   targetsFor.mockReset();
   markUnregistered.mockReset();
+  markUnregistered.mockResolvedValue(undefined);
   sendTest.mockReset();
 
   targetsFor.mockResolvedValue([
