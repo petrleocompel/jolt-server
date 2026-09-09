@@ -94,6 +94,17 @@ export function requireParam(params: Record<string, string>, name: string): stri
   return value;
 }
 
+/**
+ * Like `requireParam`, but for a path segment that identifies a `user` row.
+ * IDs are generated with `crypto.randomUUID()` (lowercase) and stored in
+ * case-sensitive `text` columns, but a client is free to send any casing
+ * (Foundation's `UUID.uuidString` is uppercase) — lowercase here so every
+ * caller compares correctly regardless of what the client sent.
+ */
+export function requireIdParam(params: Record<string, string>, name: string): string {
+  return requireParam(params, name).toLowerCase();
+}
+
 export function parseQuery<T extends z.ZodType>(request: Request, schema: T): z.infer<T> {
   const params = Object.fromEntries(new URL(request.url).searchParams);
   return schema.parse(params);

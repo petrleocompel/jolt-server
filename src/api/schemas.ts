@@ -189,7 +189,9 @@ export const SendFriendRequestBody = z
   );
 
 export const SendPokeBody = z.object({
-  friendId: z.uuid(),
+  // Lowercased: IDs are stored lowercase (`crypto.randomUUID()`) in
+  // case-sensitive `text` columns, but a client may send any casing.
+  friendId: z.uuid().toLowerCase(),
   stimulus: StimulusConfig,
 });
 
