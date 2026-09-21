@@ -6,11 +6,13 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useHydrated } from "#/lib/use-hydrated";
 
 export const Route = createFileRoute("/signup")({ component: Signup });
 
 function Signup() {
   const router = useRouter();
+  const hydrated = useHydrated();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -43,7 +45,7 @@ function Signup() {
           <h1 className="text-xl font-semibold tracking-tight">Create an account</h1>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
-          <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4">
             <div className="grid gap-2">
               <Label htmlFor="displayName">Display name</Label>
               <Input id="displayName" name="displayName" maxLength={50} required />
@@ -77,7 +79,7 @@ function Signup() {
               />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
-            <Button type="submit" disabled={busy} className="mt-2">
+            <Button type="submit" disabled={busy || !hydrated} className="mt-2">
               {busy ? "Creating…" : "Sign up"}
             </Button>
           </form>

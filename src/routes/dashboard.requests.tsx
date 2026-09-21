@@ -4,6 +4,7 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useHydrated } from "#/lib/use-hydrated";
 import {
   acceptFriendRequest,
   fetchRequests,
@@ -19,6 +20,7 @@ export const Route = createFileRoute("/dashboard/requests")({
 function Requests() {
   const { incoming, outgoing } = Route.useLoaderData();
   const router = useRouter();
+  const hydrated = useHydrated();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -58,7 +60,7 @@ function Requests() {
           <CardTitle>Add a friend</CardTitle>
         </CardHeader>
         <CardContent>
-          <form onSubmit={send} className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <form onSubmit={send} method="post" className="flex flex-col gap-4 sm:flex-row sm:items-end">
             <div className="grid flex-1 gap-2">
               <Label htmlFor="handle">Handle</Label>
               <Input id="handle" name="handle" placeholder="alice" />
@@ -68,7 +70,7 @@ function Requests() {
               <Label htmlFor="inviteCode">Invite code</Label>
               <Input id="inviteCode" name="inviteCode" placeholder="JOLT-K7QM-4821" />
             </div>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" disabled={busy || !hydrated}>
               {busy ? "Sending…" : "Send request"}
             </Button>
           </form>

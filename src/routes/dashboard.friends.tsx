@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Badge } from "#/components/ui/badge";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useHydrated } from "#/lib/use-hydrated";
 import { fetchFriends, removeFriend } from "#/server/friends";
 import { submitPoke } from "#/server/pokes";
 import type { Friend, StimulusKind } from "#/api/schemas";
@@ -110,6 +111,7 @@ function PokeComposer({
   const [intensity, setIntensity] = useState(Math.min(30, cap));
   const [repetitions, setRepetitions] = useState(1);
   const [busy, setBusy] = useState(false);
+  const hydrated = useHydrated();
 
   // Clamping here is UX only — the server re-checks and is authoritative.
   const clamped = Math.min(intensity, cap);
@@ -117,6 +119,7 @@ function PokeComposer({
   return (
     <form
       className="flex flex-col gap-3"
+      method="post"
       onSubmit={async (event) => {
         event.preventDefault();
         setBusy(true);
@@ -177,7 +180,7 @@ function PokeComposer({
         />
       </div>
 
-      <Button type="submit" disabled={busy}>
+      <Button type="submit" disabled={busy || !hydrated}>
         {busy ? "Sending…" : `Send ${kind}`}
       </Button>
     </form>

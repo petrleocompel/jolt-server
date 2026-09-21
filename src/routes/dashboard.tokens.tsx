@@ -5,6 +5,7 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useHydrated } from "#/lib/use-hydrated";
 import {
   Table,
   TableBody,
@@ -37,6 +38,7 @@ function Tokens() {
   const [days, setDays] = useState<number | undefined>(undefined);
   const [created, setCreated] = useState<ApiTokenCreated | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const hydrated = useHydrated();
   const [error, setError] = useState<string | null>(null);
 
   async function create(event: React.FormEvent) {
@@ -84,7 +86,7 @@ function Tokens() {
           <CardTitle>New token</CardTitle>
         </CardHeader>
         <CardContent>
-          <form className="flex flex-col gap-4" onSubmit={(event) => void create(event)}>
+          <form className="flex flex-col gap-4" method="post" onSubmit={(event) => void create(event)}>
             <div className="grid gap-1.5">
               <Label htmlFor="token-name">What is it for?</Label>
               <Input
@@ -115,7 +117,10 @@ function Tokens() {
             </div>
 
             <div>
-              <Button type="submit" disabled={busy !== null || name.trim().length === 0}>
+              <Button
+                type="submit"
+                disabled={busy !== null || name.trim().length === 0 || !hydrated}
+              >
                 {busy === "create" ? "Creating…" : "Create token"}
               </Button>
             </div>

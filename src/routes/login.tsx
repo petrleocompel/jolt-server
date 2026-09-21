@@ -6,11 +6,13 @@ import { Button } from "#/components/ui/button";
 import { Card, CardContent, CardHeader } from "#/components/ui/card";
 import { Input } from "#/components/ui/input";
 import { Label } from "#/components/ui/label";
+import { useHydrated } from "#/lib/use-hydrated";
 
 export const Route = createFileRoute("/login")({ component: Login });
 
 function Login() {
   const router = useRouter();
+  const hydrated = useHydrated();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -53,7 +55,9 @@ function Login() {
           <h1 className="text-xl font-semibold tracking-tight">Log in to Jolt</h1>
         </CardHeader>
         <CardContent className="flex flex-col gap-6">
-          <form onSubmit={onSubmit} className="flex flex-col gap-4">
+          {/* `method="post"` so a submission that somehow escapes the handler
+              still cannot put the password in the query string. */}
+          <form onSubmit={onSubmit} method="post" className="flex flex-col gap-4">
             <div className="grid gap-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" name="email" type="email" autoComplete="email" required />
@@ -69,7 +73,10 @@ function Login() {
               />
             </div>
             {error && <p className="text-destructive text-sm">{error}</p>}
-            <Button type="submit" disabled={busy} className="mt-2">
+            {/* Disabled until hydration: a form whose default button is
+                disabled is not submitted, which is what keeps an early Enter
+                from reloading the page with the credentials in the URL. */}
+            <Button type="submit" disabled={busy || !hydrated} className="mt-2">
               {busy ? "Logging in…" : "Log in"}
             </Button>
           </form>
