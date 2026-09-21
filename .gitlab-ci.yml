@@ -98,7 +98,9 @@ container:
 # Required CI/CD variables (Settings -> CI/CD -> Variables, masked):
 #   BETTER_AUTH_SECRET   openssl rand -base64 48
 #   POSTGRES_PASSWORD
-#   APNS_KEY_ID, APNS_KEY_P8   optional; without them pokes are logged, not sent
+#   APNS_KEY_ID, APNS_TEAM_ID, APNS_KEY_P8   optional, but all three are
+#     required together — without any one of them pokes are logged, not sent
+#   APNS_BUNDLE_ID, APNS_ENV   optional; default to cz.peelco.jolt / production
 deploy to test:
   stage: deploy
   image: docker:27-cli
