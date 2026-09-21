@@ -27,8 +27,19 @@ function Login() {
 
     setBusy(false);
     if (result.error) {
-      // Never leak whether the address exists.
-      setError("Invalid email or password.");
+      // 401 is the only answer that means the credentials were wrong, and it
+      // is the same for an unknown address as for a bad password — so the
+      // generic message still leaks nothing. Everything else has to say what
+      // it is: reporting a rejected origin or a rate-limit lockout as a bad
+      // password is what turns a fixable server problem into a user who
+      // retypes a correct password forever.
+      setError(
+        result.error.status === 401
+          ? "Invalid email or password."
+          : result.error.status === 429
+            ? "Too many attempts. Wait a few seconds and try again."
+            : (result.error.message ?? `Sign-in failed (${result.error.status}).`),
+      );
       return;
     }
     await router.navigate({ to: "/dashboard" });

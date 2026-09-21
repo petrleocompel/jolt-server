@@ -2,6 +2,7 @@ import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { bearer } from "better-auth/plugins";
 import { randomUUID } from "node:crypto";
+import { buildTrustedOrigins } from "#/auth/origins";
 import { db } from "#/db";
 import * as schema from "#/db/schema";
 import { env } from "#/env";
@@ -20,6 +21,11 @@ export const auth = betterAuth({
 
   secret: env.BETTER_AUTH_SECRET,
   baseURL: env.BETTER_AUTH_URL,
+  trustedOrigins: buildTrustedOrigins({
+    baseURL: env.BETTER_AUTH_URL,
+    extra: env.TRUSTED_ORIGINS,
+    isDevelopment: env.NODE_ENV !== "production",
+  }),
 
   emailAndPassword: {
     enabled: true,

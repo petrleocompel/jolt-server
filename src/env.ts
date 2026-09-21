@@ -21,6 +21,13 @@ const envSchema = z.object({
 
   BETTER_AUTH_SECRET: z.string().min(32),
   BETTER_AUTH_URL: z.url().default("http://127.0.0.1:3000"),
+  /**
+   * Extra origins browsers may sign in from, comma-separated. Better Auth
+   * rejects a sign-in from any origin it does not trust, so a deployment
+   * reached under a second name (a LAN IP, a `www.` alias) needs that name
+   * listed here or logging in there fails as if the password were wrong.
+   */
+  TRUSTED_ORIGINS: z.string().optional(),
 
   // APNs. Absent in dev/test — the push sender falls back to a console stub,
   // so the whole app runs end-to-end without Apple credentials.

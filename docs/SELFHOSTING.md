@@ -32,6 +32,10 @@ Edit `.env`. The three that matter:
 | `BETTER_AUTH_SECRET` | `openssl rand -base64 48`. Rotating it logs everyone out. |
 | `POSTGRES_PASSWORD` | Anything long. Only reachable inside the compose network. |
 
+One more is worth knowing about before you need it: `TRUSTED_ORIGINS`, a
+comma-separated list of any *other* origin browsers reach this server on.
+Sign-in is refused from an origin the server doesn't trust.
+
 Leave the `APNS_*` values blank for now.
 
 ## 2. Start it
@@ -159,6 +163,21 @@ internet; port 80 is not optional, it is how the ACME challenge is answered.
 **Logins succeed then immediately fail.** `PUBLIC_URL` (or `APP_HOST`) doesn't
 match the origin the app is actually reaching. Better Auth scopes its cookies
 to that value.
+
+**The web login says the password is wrong when it isn't.** The browser
+reached the server under a name the server doesn't trust — a LAN IP, a `www.`
+alias, `localhost` instead of the configured host — and the sign-in is refused
+before the password is ever checked. The page now shows the server's own
+message (`Invalid origin`) rather than a credentials error. Add the name to
+`TRUSTED_ORIGINS` in `.env`, comma-separated, and restart:
+
+```env
+TRUSTED_ORIGINS=http://192.168.1.10:7385,https://www.jolt.example.com
+```
+
+**Sign-in starts failing after a few tries.** Better Auth rate-limits
+`/sign-in` to 3 attempts per 10 seconds per client IP. The login page now says
+so instead of blaming the password; wait ten seconds and try again.
 
 **`migrate` exits non-zero and nothing starts.** That is deliberate — a failed
 migration stops the deploy rather than serving against a half-migrated

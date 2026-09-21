@@ -60,6 +60,9 @@ services:
       DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-jolt}:${POSTGRES_PASSWORD:-jolt}@db:5432/${POSTGRES_DB:-jolt}}
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET}
       BETTER_AUTH_URL: ${PUBLIC_URL:-https://${APP_HOST:?set APP_HOST to your domain}}
+      # Any other origin browsers reach this server on; sign-in is refused
+      # from an origin the server does not trust.
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
       APNS_KEY_ID: ${APNS_KEY_ID:-}
       APNS_TEAM_ID: ${APNS_TEAM_ID:-}
       APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-cz.peelco.jolt}
