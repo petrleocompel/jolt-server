@@ -124,6 +124,83 @@ export async function sendPoke(
   return toApi(row, senderId, recipient);
 }
 
+/**
+ * Minimum gap between self-stimuli. A poke is rate limited by the recipient's
+ * cooldown; nobody sets a cooldown against themselves, so a looping script
+ * would otherwise hammer APNs on the user's behalf until Apple noticed.
+ */
+const SELF_STIMULUS_INTERVAL_MS = 1_000;
+
+const lastSelfStimulusAt = new Map<string, number>();
+
+/**
+ * Fires a stimulus at your own devices — the endpoint behind "let my own code
+ * jolt me" (`POST /me/stimulus`, usable with a personal access token).
+ *
+ * No friendship and no permission grant, because the only person involved is
+ * the one holding the credential. It is still recorded as a `poke_event` from
+ * you to you, so it shows up in the activity feed, acks through the same
+ * endpoint, and is delivered as an ordinary poke push — which is what lets
+ * every existing client fire it with no changes.
+ */
+export async function sendSelfStimulus(
+  userId: string,
+  stimulus: StimulusConfig,
+): Promise<PokeEvent> {
+  const now = Date.now();
+  for (const [id, at] of lastSelfStimulusAt) {
+    if (now - at > SELF_STIMULUS_INTERVAL_MS) lastSelfStimulusAt.delete(id);
+  }
+
+  const previous = lastSelfStimulusAt.get(userId);
+  if (previous !== undefined && now - previous < SELF_STIMULUS_INTERVAL_MS) {
+    throw ApiError.tooManyRequests("Too fast — one self-stimulus per second.");
+  }
+
+  const [me] = await db.select().from(userTable).where(eq(userTable.id, userId)).limit(1);
+  if (!me) throw ApiError.unauthorized();
+
+  // Checked up front rather than left to the fire-and-forget delivery below:
+  // an integration that gets 201 for a stimulus nobody could possibly receive
+  // has been told the opposite of what happened.
+  const targets = await activeTargets(userId);
+  if (targets.length === 0) {
+    throw ApiError.notFound(
+      "No registered devices. Open the app and allow notifications first.",
+    );
+  }
+
+  const [row] = await db
+    .insert(pokeEvent)
+    .values({
+      senderId: userId,
+      recipientId: userId,
+      kind: stimulus.kind,
+      intensity: stimulus.intensity,
+      repetitions: stimulus.repetitions,
+      status: "pending",
+    })
+    .returning();
+
+  if (!row) throw ApiError.notFound("Could not record the stimulus.");
+  lastSelfStimulusAt.set(userId, now);
+
+  void deliver(row.id, userId, {
+    pokeID: row.id,
+    senderHandle: me.handle,
+    senderDisplayName: me.name,
+    stimulus,
+    sentAt: row.createdAt.toISOString(),
+  }).catch((error) => console.error("[pokes] self delivery failed", row.id, error));
+
+  return toApi(row, userId, me);
+}
+
+/** Test seam — the rate-limit map outlives a single vitest case otherwise. */
+export function resetSelfStimulusLimit(): void {
+  lastSelfStimulusAt.clear();
+}
+
 async function deliver(
   pokeId: string,
   recipientId: string,

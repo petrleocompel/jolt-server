@@ -202,3 +202,102 @@ test("login rejects a wrong password without leaking whether the email exists", 
   expect(noSuchUser.status()).toBe(401);
   expect(await wrongPassword.json()).toEqual(await noSuchUser.json());
 });
+
+test("a personal access token drives the self-stimulus endpoint, and nothing else", async ({
+  request,
+}) => {
+  const erin = await signup(request, `erin${unique()}`);
+  let token = "";
+  let tokenId = "";
+
+  await test.step("minting one returns the secret exactly once", async () => {
+    const response = await request.post(`${API}/me/tokens`, {
+      headers: auth(erin.token),
+      data: { name: "home assistant" },
+    });
+    expect(response.status()).toBe(201);
+    const created = await response.json();
+    expect(created.token).toMatch(/^jolt_pat_/);
+    expect(created.lastUsedAt).toBeNull();
+    expect(created.expiresAt).toBeNull();
+    token = created.token;
+    tokenId = created.id;
+
+    const listed = await request.get(`${API}/me/tokens`, { headers: auth(erin.token) });
+    const rows = await listed.json();
+    expect(rows).toHaveLength(1);
+    // Listing shows enough to recognise the row and nothing you could present.
+    expect(rows[0].token).toBeUndefined();
+    expect(token).toContain(rows[0].prefix);
+  });
+
+  await test.step("it authenticates the account that minted it", async () => {
+    const response = await request.get(`${API}/me`, { headers: auth(token) });
+    expect(response.status()).toBe(200);
+    expect((await response.json()).handle).toBe(erin.user.handle);
+  });
+
+  await test.step("but reaches neither other people nor its own management", async () => {
+    // 403, not 401: the token is fine, the endpoint is not.
+    expect((await request.get(`${API}/friends`, { headers: auth(token) })).status()).toBe(403);
+    // A token that could mint another would survive its own revocation.
+    expect((await request.get(`${API}/me/tokens`, { headers: auth(token) })).status()).toBe(403);
+  });
+
+  await test.step("a self stimulus with no device to fire on is a 404", async () => {
+    const response = await request.post(`${API}/me/stimulus`, {
+      headers: auth(token),
+      data: { stimulus: { kind: "vibe", intensity: 20, repetitions: 1 } },
+    });
+    expect(response.status()).toBe(404);
+  });
+
+  await test.step("with a device it lands in the activity feed, acked as usual", async () => {
+    const registered = await request.post(`${API}/devices/push-token`, {
+      headers: auth(erin.token),
+      data: { token: `e2e-${unique()}${unique()}`, platform: "ios" },
+    });
+    expect(registered.status()).toBe(204);
+
+    const response = await request.post(`${API}/me/stimulus`, {
+      headers: auth(token),
+      data: { stimulus: { kind: "zap", intensity: 15, repetitions: 2 } },
+    });
+    expect(response.status()).toBe(201);
+    const event = await response.json();
+    expect(event).toMatchObject({
+      direction: "sent",
+      status: "pending",
+      friendHandle: erin.user.handle,
+      stimulus: { kind: "zap", intensity: 15, repetitions: 2 },
+    });
+
+    // Same ack endpoint as any other poke — it is a poke_event from you to you.
+    const acked = await request.post(`${API}/pokes/${event.id}/ack`, {
+      headers: auth(erin.token),
+      data: { status: "fired" },
+    });
+    expect(acked.status()).toBe(200);
+    expect((await acked.json()).status).toBe("fired");
+  });
+
+  await test.step("a looping script is held to one per second", async () => {
+    const response = await request.post(`${API}/me/stimulus`, {
+      headers: auth(token),
+      data: { stimulus: { kind: "vibe", intensity: 10, repetitions: 1 } },
+    });
+    expect(response.status()).toBe(429);
+  });
+
+  await test.step("revoking stops it working immediately", async () => {
+    const revoked = await request.delete(`${API}/me/tokens/${tokenId}`, {
+      headers: auth(erin.token),
+    });
+    expect(revoked.status()).toBe(204);
+    expect((await request.get(`${API}/me`, { headers: auth(token) })).status()).toBe(401);
+    // Revoking it twice 404s, exactly like an id that never existed.
+    expect(
+      (await request.delete(`${API}/me/tokens/${tokenId}`, { headers: auth(erin.token) })).status(),
+    ).toBe(404);
+  });
+});

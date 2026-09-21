@@ -117,6 +117,35 @@ original enum had only terminal values, leaving nothing honest to record
 between accepting a poke and hearing back from the device. Clients should
 treat a long-`pending` poke as undelivered.
 
+## Your own integrations
+
+`POST /api/v1/me/stimulus` fires a stimulus at your own devices. No friend and
+no permission grant, because the only person in the request is the one holding
+the credential — which can be a **personal access token**, minted at
+`POST /api/v1/me/tokens` and pasted into whatever you are wiring up:
+
+```bash
+curl -X POST https://jolt.example/api/v1/me/stimulus \
+  -H "Authorization: Bearer jolt_pat_…" \
+  -H "Content-Type: application/json" \
+  -d '{"stimulus":{"kind":"vibe","intensity":20,"repetitions":1}}'
+```
+
+Only the sha256 of a token is stored, so the secret is returned exactly once,
+at creation, and a lost one is replaced rather than looked up. A token reaches
+`GET /me` and `POST /me/stimulus` and nothing else — anywhere else it is a
+**403, not a 401**, so an integrator is told the token is fine and the endpoint
+is not. Minting, listing and revoking are session-only: a token that could
+mint another would survive its own revocation.
+
+The stimulus is recorded as a `poke_event` from you to you, so it appears in
+your activity feed and acks through `POST /pokes/{id}/ack` like any other poke,
+and it is delivered as an ordinary poke push — which is what lets existing
+clients fire it with no changes. Rate limited to one per second. With no
+registered device it is a 404 rather than a silent success, because an
+integration told "201" for a stimulus nobody could receive has been told the
+opposite of what happened.
+
 ## Permissions
 
 Per stimulus (`zap`/`vibe`/`beep`), each with its own allow flag, intensity

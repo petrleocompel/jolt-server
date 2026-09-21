@@ -155,6 +155,24 @@ export const TestPushPayload = z.object({
   stimulus: StimulusConfig.optional(),
 });
 
+/**
+ * A personal access token as listed back to its owner. The secret itself is
+ * returned exactly once, by the create call, and is unrecoverable after that.
+ */
+export const ApiToken = z.object({
+  id: z.uuid(),
+  name: z.string(),
+  /** Leading characters of the secret, so a row is recognisable in the list. */
+  prefix: z.string(),
+  createdAt: z.iso.datetime(),
+  lastUsedAt: z.iso.datetime().nullable(),
+  /** Null means it lives until revoked. */
+  expiresAt: z.iso.datetime().nullable(),
+});
+
+/** The one response that carries the secret. Store it now or mint a new one. */
+export const ApiTokenCreated = ApiToken.extend({ token: z.string() });
+
 export const ApiError = z.object({ message: z.string() });
 
 // --- Request bodies ---------------------------------------------------------
@@ -214,6 +232,15 @@ export const TestPushAckBody = z.object({
   status: AckableStatus.optional(),
 });
 
+export const CreateApiTokenBody = z.object({
+  name: z.string().min(1).max(60),
+  /** Omit for a token that lives until revoked. */
+  expiresInDays: z.int().min(1).max(365).optional(),
+});
+
+/** What to fire at your own devices. No friend, no grant — just you. */
+export const SelfStimulusBody = z.object({ stimulus: StimulusConfig });
+
 export const PokesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
   before: z.iso.datetime().optional(),
@@ -239,6 +266,8 @@ export type TestPushDeviceResult = z.infer<typeof TestPushDeviceResult>;
 export type TestPushAck = z.infer<typeof TestPushAck>;
 export type TestPushStatus = z.infer<typeof TestPushStatus>;
 export type TestPushPayload = z.infer<typeof TestPushPayload>;
+export type ApiToken = z.infer<typeof ApiToken>;
+export type ApiTokenCreated = z.infer<typeof ApiTokenCreated>;
 
 /** Named components, for the openapi:check drift comparison. */
 export const components = {
@@ -259,5 +288,7 @@ export const components = {
   TestPushAck,
   TestPushStatus,
   TestPushPayload,
+  ApiToken,
+  ApiTokenCreated,
   Error: ApiError,
 } as const;

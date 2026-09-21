@@ -1,6 +1,7 @@
 import { env } from "#/env";
 import { deleteEventsBefore } from "#/services/pokes";
 import { deleteDisabledBefore } from "#/services/devices";
+import { deleteExpiredBefore } from "#/services/api-tokens";
 import { db } from "#/db";
 import { friendRequest } from "#/db/schema";
 import { and, eq, lt } from "drizzle-orm";
@@ -39,6 +40,17 @@ export const jobs: Array<CronJob> = [
         )
         .returning({ id: friendRequest.id });
       return `expired ${rows.length} stale request(s)`;
+    },
+  },
+  {
+    name: "prune-expired-api-tokens",
+    description:
+      "Delete personal access tokens that expired a week ago. They stop " +
+      "working the moment they expire; the row survives a little longer so " +
+      "the dashboard can explain why an integration went quiet.",
+    run: async () => {
+      const removed = await deleteExpiredBefore(daysAgo(7));
+      return `pruned ${removed} expired API token(s)`;
     },
   },
   {

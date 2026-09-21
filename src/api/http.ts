@@ -4,6 +4,7 @@ import { ApiError } from "#/api/errors";
 import { db } from "#/db";
 import { user as userTable } from "#/db/schema";
 import { eq } from "drizzle-orm";
+import { isApiTokenCandidate, userForApiToken } from "#/services/api-tokens";
 import type { User } from "#/db/schema";
 
 export function json(body: unknown, status = 200): Response {
@@ -54,11 +55,48 @@ export function handler(
   };
 }
 
+function bearerToken(request: Request): string | null {
+  const header = request.headers.get("authorization");
+  if (!header) return null;
+  const [scheme, ...rest] = header.split(" ");
+  if (scheme?.toLowerCase() !== "bearer") return null;
+  return rest.join(" ").trim() || null;
+}
+
+export interface AuthOptions {
+  /**
+   * Also accept a personal access token. Only for endpoints that act on the
+   * caller's own account: a PAT is a long-lived credential someone pasted
+   * into a third-party integration, so it must never be able to mint another
+   * token, change the account, or reach anybody else's data.
+   */
+  allowApiToken?: boolean;
+}
+
 /**
  * Resolves the caller from the bearer token (or session cookie, which is what
  * the web UI uses). Throws 401 when there is no valid session.
  */
-export async function requireUser(request: Request): Promise<User> {
+export async function requireUser(
+  request: Request,
+  options: AuthOptions = {},
+): Promise<User> {
+  const presented = bearerToken(request);
+
+  // A PAT is recognisable by its prefix, so it never reaches Better Auth —
+  // and an endpoint that does not opt in says so rather than returning the
+  // bare 401 that would send an integrator hunting for a bad token.
+  if (presented && isApiTokenCandidate(presented)) {
+    if (!options.allowApiToken) {
+      throw ApiError.forbidden(
+        "API tokens only work on your own account's endpoints. Sign in for this one.",
+      );
+    }
+    const row = await userForApiToken(presented);
+    if (!row) throw ApiError.unauthorized("Invalid or expired API token.");
+    return row;
+  }
+
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user.id) throw ApiError.unauthorized();
 

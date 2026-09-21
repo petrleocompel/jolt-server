@@ -230,6 +230,37 @@ export const deviceToken = pgTable(
 );
 
 /**
+ * A personal access token: a long-lived credential a user mints for their own
+ * scripts, so a third-party integration can jolt *them* without being handed
+ * an account password or a session that expires underneath it.
+ *
+ * Only the sha256 of the secret is stored. The secret is shown once, at
+ * creation, and is unrecoverable afterwards — a leaked database gives an
+ * attacker hashes, not working tokens.
+ */
+export const apiToken = pgTable(
+  "api_token",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    /** What the user called it — "home assistant", "focus timer". */
+    name: text("name").notNull(),
+    /** Hex sha256 of the presented secret. Unique so a lookup is one index hit. */
+    tokenHash: text("token_hash").notNull().unique(),
+    /** Leading characters of the secret, so a row is recognisable in the list. */
+    prefix: text("prefix").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Coarse: only written when it moves by more than a minute. */
+    lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+    /** Null means it lives until revoked. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+  (t) => [index("api_token_user_idx").on(t.userId)],
+);
+
+/**
  * One row per poke, shared by both participants. `direction` in the API is
  * derived per viewer rather than stored, so a poke can never disagree with
  * itself across the two activity feeds.
@@ -268,12 +299,17 @@ export const pokeEvent = pgTable(
 
 export const userRelations = relations(user, ({ many }) => ({
   devices: many(deviceToken),
+  apiTokens: many(apiToken),
   sentPokes: many(pokeEvent, { relationName: "pokeSender" }),
   receivedPokes: many(pokeEvent, { relationName: "pokeRecipient" }),
 }));
 
 export const deviceTokenRelations = relations(deviceToken, ({ one }) => ({
   user: one(user, { fields: [deviceToken.userId], references: [user.id] }),
+}));
+
+export const apiTokenRelations = relations(apiToken, ({ one }) => ({
+  user: one(user, { fields: [apiToken.userId], references: [user.id] }),
 }));
 
 export const pokeEventRelations = relations(pokeEvent, ({ one }) => ({
@@ -294,4 +330,5 @@ export type Friendship = typeof friendship.$inferSelect;
 export type FriendPermission = typeof friendPermission.$inferSelect;
 export type FriendRequestRow = typeof friendRequest.$inferSelect;
 export type DeviceToken = typeof deviceToken.$inferSelect;
+export type ApiTokenRow = typeof apiToken.$inferSelect;
 export type PokeEvent = typeof pokeEvent.$inferSelect;

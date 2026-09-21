@@ -27,6 +27,11 @@ security:
 
 tags:
   - name: auth
+  - name: me
+    description: >
+      Your own account. These endpoints involve nobody else, which is why
+      `/me` and `/me/stimulus` also accept a personal access token
+      (`patAuth`) — token management itself does not.
   - name: devices
   - name: friends
   - name: pokes
@@ -108,6 +113,119 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Me' }
+
+  /me/stimulus:
+    post:
+      tags: [me]
+      summary: Fire a stimulus at your own devices
+      description: >
+        "Let my own code jolt me." No friendship and no permission grant is
+        involved — the only person in this request is the one holding the
+        credential — so this is the one poke-shaped call a personal access
+        token may make.
+
+
+        It is still recorded as a `PokeEvent` from you to you (so it shows in
+        the activity feed and acks through `POST /pokes/{pokeId}/ack`) and is
+        delivered as an ordinary poke push, which is what lets an existing
+        client fire it with no changes.
+
+
+        Rate limited to one per second per account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [stimulus]
+              properties:
+                stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+      responses:
+        '201':
+          description: Recorded and queued for push delivery, `status` `pending`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PokeEvent' }
+        '404':
+          description: No registered devices to fire it on
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: More than one per second
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /me/tokens:
+    get:
+      tags: [me]
+      summary: Your personal access tokens
+      description: >
+        Session only. A personal access token cannot list, mint or revoke
+        tokens — one that could mint another would survive its own revocation.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ApiToken' }
+        '403':
+          description: Presented a personal access token rather than a session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    post:
+      tags: [me]
+      summary: Mint a personal access token
+      description: >
+        The response is the only time the secret is returned; only its hash is
+        stored, so a lost token is replaced rather than looked up.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 60
+                  description: What it is for — "home assistant", "focus timer".
+                expiresInDays:
+                  type: integer
+                  minimum: 1
+                  maximum: 365
+                  description: Omit for a token that lives until revoked.
+      responses:
+        '201':
+          description: Created — save `token` now
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiTokenCreated' }
+
+  /me/tokens/{tokenId}:
+    delete:
+      tags: [me]
+      summary: Revoke a personal access token
+      description: Revoking deletes the row; the token stops working immediately.
+      parameters:
+        - name: tokenId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '204': { description: Revoked }
+        '404':
+          description: No token of yours with that id
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /devices/push-token:
     post:
@@ -473,6 +591,14 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    patAuth:
+      type: http
+      scheme: bearer
+      description: >
+        A personal access token (`jolt_pat_…`), minted at `POST /me/tokens`
+        and pasted into a third-party integration. Accepted only on `GET /me`
+        and `POST /me/stimulus`; anywhere else it is a 403, not a 401, so an
+        integrator is told the token is fine but the endpoint is not.
 
   parameters:
     FriendId:
@@ -770,6 +896,43 @@ components:
           deviceID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
           sentAt: '2026-09-07T10:15:00Z'
           source: web
+
+    ApiToken:
+      type: object
+      description: >
+        A personal access token as listed back to its owner. The secret is
+        returned exactly once, by `POST /me/tokens`, and only its hash is
+        stored — there is no endpoint that can show it again.
+      required: [id, name, prefix, createdAt, lastUsedAt, expiresAt]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        prefix:
+          type: string
+          description: Leading characters of the secret, so a row is recognisable in the list.
+        createdAt: { type: string, format: date-time }
+        lastUsedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: >
+            Null until first use. Written at most once a minute, so it answers
+            "is this still in use?" rather than "when exactly was the last call".
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Null means it lives until revoked.
+
+    ApiTokenCreated:
+      allOf:
+        - $ref: '#/components/schemas/ApiToken'
+        - type: object
+          required: [token]
+          properties:
+            token:
+              type: string
+              description: The secret, e.g. `jolt_pat_…`. Shown once. Store it now.
 
     Error:
       type: object
