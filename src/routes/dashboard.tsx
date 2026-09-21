@@ -3,6 +3,7 @@ import {
   Activity,
   Home,
   Inbox,
+  KeyRound,
   ShieldCheck,
   Smartphone,
   UserPlus,
@@ -25,6 +26,7 @@ const NAV: Array<NavItem> = [
   { to: "/dashboard/activity", label: "Activity", icon: Activity },
   { to: "/dashboard/invite", label: "Invite", icon: UserPlus },
   { to: "/dashboard/devices", label: "Devices", icon: Smartphone },
+  { to: "/dashboard/tokens", label: "API tokens", icon: KeyRound },
 ];
 
 function DashboardShell() {

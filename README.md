@@ -121,8 +121,9 @@ treat a long-`pending` poke as undelivered.
 
 `POST /api/v1/me/stimulus` fires a stimulus at your own devices. No friend and
 no permission grant, because the only person in the request is the one holding
-the credential — which can be a **personal access token**, minted at
-`POST /api/v1/me/tokens` and pasted into whatever you are wiring up:
+the credential — which can be a **personal access token**, minted under
+**Dashboard → API tokens** (or at `POST /api/v1/me/tokens`) and pasted into
+whatever you are wiring up:
 
 ```bash
 curl -X POST https://jolt.example/api/v1/me/stimulus \
@@ -136,7 +137,10 @@ at creation, and a lost one is replaced rather than looked up. A token reaches
 `GET /me` and `POST /me/stimulus` and nothing else — anywhere else it is a
 **403, not a 401**, so an integrator is told the token is fine and the endpoint
 is not. Minting, listing and revoking are session-only: a token that could
-mint another would survive its own revocation.
+mint another would survive its own revocation. The dashboard page shows the
+secret once, with a ready-made curl line, and lists every token with when it
+was last used so a forgotten integration is visible rather than merely
+remembered.
 
 The stimulus is recorded as a `poke_event` from you to you, so it appears in
 your activity feed and acks through `POST /pokes/{id}/ack` like any other poke,
