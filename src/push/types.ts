@@ -17,6 +17,12 @@ export interface PokePushPayload {
   senderHandle: string;
   senderDisplayName: string;
   stimulus: StimulusConfig;
+  /**
+   * When the server accepted the poke, ISO-8601. The alert body already
+   * carries a rendered time, but that one is in the server's configured zone
+   * — a client that wants the recipient's own local time formats this.
+   */
+  sentAt: string;
 }
 
 /**
@@ -87,29 +93,75 @@ export interface PushSender {
   close: () => Promise<void>;
 }
 
-/** Human-readable alert text, e.g. "Alice" / "zapped you!". */
-export function alertTextFor(payload: PokePushPayload): { title: string; body: string } {
+/** How strong it was, as the alert says it: "30% x2", or just "30%". */
+export function formatStimulus(stimulus: StimulusConfig): string {
+  const repeats = stimulus.repetitions > 1 ? ` x${stimulus.repetitions}` : "";
+  return `${stimulus.intensity}%${repeats}`;
+}
+
+/**
+ * When it was sent, as the alert says it: "14:32 UTC".
+ *
+ * Rendered server-side, so it is in the server's configured zone rather than
+ * the recipient's — hence the zone name, which is the whole reason it is
+ * printed. A client that wants local time has the raw `sentAt` in the payload
+ * and should prefer it. Returns "" for a timestamp we cannot parse, so a bad
+ * clock costs the time, not the notification.
+ */
+export function formatSendTime(sentAt: string | undefined, timeZone = "UTC"): string {
+  if (!sentAt) return "";
+  const at = new Date(sentAt);
+  if (Number.isNaN(at.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+      timeZone,
+      timeZoneName: "short",
+    }).format(at);
+  } catch {
+    // An unknown zone is a misconfiguration, not a reason to drop the push.
+    return formatSendTime(sentAt, "UTC");
+  }
+}
+
+/**
+ * Human-readable alert text, e.g. "Alice" / "zapped you — 30% x2 at 14:32 UTC".
+ *
+ * The strength and the time are in the body deliberately: a poke arrives
+ * while the phone is locked, and "zapped you" alone tells the recipient
+ * neither how hard nor — once a few pile up, or the push is delivered late —
+ * which one they are looking at.
+ */
+export function alertTextFor(
+  payload: PokePushPayload,
+  timeZone?: string,
+): { title: string; body: string } {
   const verb: Record<StimulusKind, string> = {
-    zap: "zapped you!",
-    vibe: "buzzed you!",
-    beep: "beeped you!",
+    zap: "zapped you",
+    vibe: "buzzed you",
+    beep: "beeped you",
   };
+  const at = formatSendTime(payload.sentAt, timeZone);
   return {
     title: payload.senderDisplayName || `@${payload.senderHandle}`,
-    body: verb[payload.stimulus.kind],
+    body: `${verb[payload.stimulus.kind]} — ${formatStimulus(payload.stimulus)}${at ? ` at ${at}` : ""}`,
   };
 }
 
 /** Alert text for a diagnostic push. Says which half of the test it is. */
-export function testAlertTextFor(payload: {
-  stimulus?: StimulusConfig;
-}): { title: string; body: string } {
+export function testAlertTextFor(
+  payload: { stimulus?: StimulusConfig; sentAt?: string },
+  timeZone?: string,
+): { title: string; body: string } {
+  const at = formatSendTime(payload.sentAt, timeZone);
+  const sentAt = at ? `, sent ${at}` : "";
   if (!payload.stimulus) {
-    return { title: "Jolt", body: "Test notification — push delivery works." };
+    return { title: "Jolt", body: `Test notification — push delivery works${sentAt}.` };
   }
-  const { kind, intensity, repetitions } = payload.stimulus;
   return {
     title: "Jolt test",
-    body: `Delivery works — firing ${kind} ${intensity}%${repetitions > 1 ? ` x${repetitions}` : ""}.`,
+    body: `Delivery works — firing ${payload.stimulus.kind} ${formatStimulus(payload.stimulus)}${sentAt}.`,
   };
 }

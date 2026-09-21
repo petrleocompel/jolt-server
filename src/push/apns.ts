@@ -29,6 +29,8 @@ export interface ApnsConfig {
   /** Full .p8 contents. Literal `\n` escapes are tolerated (CI variables). */
   keyP8: string;
   environment: "sandbox" | "production";
+  /** IANA zone the send time in the alert body is rendered in. */
+  timeZone: string;
 }
 
 export interface ApnsSendOutcome {
@@ -55,11 +57,14 @@ export function classifyApnsOutcome(outcome: ApnsSendOutcome): PushFailureReason
  * — iOS drops the background wake if an `alert` is present, which is the whole
  * reason a poke is two pushes rather than one.
  */
-export function buildPokePayloadBodies(payload: PokePushPayload): {
+export function buildPokePayloadBodies(
+  payload: PokePushPayload,
+  timeZone?: string,
+): {
   alertBody: string;
   silentBody: string;
 } {
-  const alert = alertTextFor(payload);
+  const alert = alertTextFor(payload, timeZone);
   const alertBody = JSON.stringify({
     aps: { alert: { title: alert.title, body: alert.body }, sound: "default" },
     type: "poke",
@@ -78,11 +83,14 @@ export function buildPokePayloadBodies(payload: PokePushPayload): {
  * so the client acks it to the test endpoint — there is no `poke_event` row
  * for it to ack against.
  */
-export function buildTestPayloadBodies(payload: TestPushPayload): {
+export function buildTestPayloadBodies(
+  payload: TestPushPayload,
+  timeZone?: string,
+): {
   alertBody: string;
   silentBody: string;
 } {
-  const alert = testAlertTextFor(payload);
+  const alert = testAlertTextFor(payload, timeZone);
   const alertBody = JSON.stringify({
     aps: { alert: { title: alert.title, body: alert.body }, sound: "default" },
     type: "test",
@@ -252,7 +260,7 @@ export class ApnsPushSender implements PushSender {
   ): Promise<Array<PushResult>> {
     if (targets.length === 0) return [];
 
-    const bodies = buildPokePayloadBodies(payload);
+    const bodies = buildPokePayloadBodies(payload, this.config.timeZone);
     const base = await this.baseHeaders();
 
     return Promise.all(
@@ -276,7 +284,10 @@ export class ApnsPushSender implements PushSender {
       targets.map((target) => {
         // Per-target bodies: each device is told its own id so the ack it
         // sends back can be attributed to the right row.
-        const bodies = buildTestPayloadBodies({ ...payload, deviceID: target.id });
+        const bodies = buildTestPayloadBodies(
+          { ...payload, deviceID: target.id },
+          this.config.timeZone,
+        );
         // apns-id must be a unique UUID per push and the same test fans out to
         // several devices, so the test id alone would collide.
         return deliverToTarget(target, bodies, base, crypto.randomUUID(), (deviceToken, body, headers) =>

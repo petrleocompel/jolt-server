@@ -5,6 +5,15 @@ import { z } from "zod";
  * the browser — parsing happens at module load and would leak variable names
  * into the client bundle.
  */
+function isTimeZone(zone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-GB", { timeZone: zone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 
@@ -20,6 +29,17 @@ const envSchema = z.object({
   APNS_BUNDLE_ID: z.string().default("cz.peelco.jolt"),
   APNS_KEY_P8: z.string().optional(),
   APNS_ENV: z.enum(["sandbox", "production"]).default("sandbox"),
+
+  /**
+   * IANA zone the send time in notification text is rendered in. Alert bodies
+   * are built on the server, so there is no recipient locale to use — the
+   * zone name is printed alongside the time, and clients that want local time
+   * have the raw `sentAt` in the payload.
+   */
+  PUSH_TIME_ZONE: z
+    .string()
+    .default("UTC")
+    .refine(isTimeZone, { message: "must be an IANA time zone, e.g. Europe/Prague" }),
 
   SENTRY_DSN: z.string().optional(),
 

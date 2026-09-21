@@ -6,7 +6,7 @@ import {
   deliverToTarget,
 } from "#/push/apns";
 import { ConsolePushSender } from "#/push/console";
-import { alertTextFor, testAlertTextFor } from "#/push/types";
+import { alertTextFor, formatSendTime, testAlertTextFor } from "#/push/types";
 import type { ApnsSendOutcome } from "#/push/apns";
 import type { PokePushPayload, PushTarget, TestPushPayload } from "#/push/types";
 
@@ -15,6 +15,7 @@ const payload: PokePushPayload = {
   senderHandle: "alice",
   senderDisplayName: "Alice Example",
   stimulus: { kind: "zap", intensity: 30, repetitions: 2 },
+  sentAt: "2026-09-21T14:32:00.000Z",
 };
 
 const target: PushTarget = { id: "device-1", token: "abc123deadbeef" };
@@ -26,12 +27,47 @@ const testPayload: TestPushPayload = {
   source: "web",
 };
 
+describe("formatSendTime", () => {
+  it("renders the wall clock of the configured zone, naming it", () => {
+    expect(formatSendTime("2026-09-21T14:32:00.000Z")).toBe("14:32 UTC");
+    // The abbreviation itself is ICU's to choose (CEST here, GMT+2 on a
+    // trimmed build) — the shifted wall clock is what this pins down.
+    expect(formatSendTime("2026-09-21T14:32:00.000Z", "Europe/Prague")).toMatch(/^16:32 \S+$/);
+  });
+
+  it("falls back to UTC rather than throwing on a bad zone", () => {
+    // Misconfiguration costs the zone, never the notification.
+    expect(formatSendTime("2026-09-21T14:32:00.000Z", "Mars/Olympus")).toBe("14:32 UTC");
+  });
+
+  it("returns nothing for a timestamp it cannot parse", () => {
+    expect(formatSendTime(undefined)).toBe("");
+    expect(formatSendTime("not a date")).toBe("");
+  });
+});
+
 describe("alertTextFor", () => {
   it("maps each stimulus kind to its verb", () => {
-    const verbs = (["zap", "vibe", "beep"] as const).map(
-      (kind) => alertTextFor({ ...payload, stimulus: { ...payload.stimulus, kind } }).body,
+    const verbs = (["zap", "vibe", "beep"] as const).map((kind) =>
+      alertTextFor({ ...payload, stimulus: { ...payload.stimulus, kind } }).body,
     );
-    expect(verbs).toEqual(["zapped you!", "buzzed you!", "beeped you!"]);
+    expect(verbs).toEqual([
+      "zapped you — 30% x2 at 14:32 UTC",
+      "buzzed you — 30% x2 at 14:32 UTC",
+      "beeped you — 30% x2 at 14:32 UTC",
+    ]);
+  });
+
+  it("says how hard and when, in the configured zone", () => {
+    expect(alertTextFor(payload, "Europe/Prague").body).toMatch(
+      /^zapped you — 30% x2 at 16:32 \S+$/,
+    );
+  });
+
+  it("leaves the repetition count out of a single poke", () => {
+    expect(
+      alertTextFor({ ...payload, stimulus: { ...payload.stimulus, repetitions: 1 } }).body,
+    ).toBe("zapped you — 30% at 14:32 UTC");
   });
 
   it("titles with the display name, falling back to @handle", () => {
@@ -64,7 +100,10 @@ describe("buildPokePayloadBodies", () => {
     const alert = JSON.parse(alertBody);
     const silent = JSON.parse(silentBody);
 
-    expect(alert.aps.alert).toEqual({ title: "Alice Example", body: "zapped you!" });
+    expect(alert.aps.alert).toEqual({
+      title: "Alice Example",
+      body: "zapped you — 30% x2 at 14:32 UTC",
+    });
     expect(alert.aps.sound).toBe("default");
     // The load-bearing invariant: no alert on the silent push, or iOS drops
     // the background wake.
@@ -88,12 +127,18 @@ describe("testAlertTextFor", () => {
       title: "Jolt",
       body: "Test notification — push delivery works.",
     });
+    expect(testAlertTextFor({ sentAt: testPayload.sentAt }).body).toBe(
+      "Test notification — push delivery works, sent 10:15 UTC.",
+    );
   });
 
-  it("names the stimulus when one is coming", () => {
+  it("names the stimulus and the send time when one is coming", () => {
     expect(
-      testAlertTextFor({ stimulus: { kind: "zap", intensity: 30, repetitions: 2 } }).body,
-    ).toBe("Delivery works — firing zap 30% x2.");
+      testAlertTextFor({
+        stimulus: { kind: "zap", intensity: 30, repetitions: 2 },
+        sentAt: testPayload.sentAt,
+      }).body,
+    ).toBe("Delivery works — firing zap 30% x2, sent 10:15 UTC.");
     expect(
       testAlertTextFor({ stimulus: { kind: "vibe", intensity: 20, repetitions: 1 } }).body,
     ).toBe("Delivery works — firing vibe 20%.");

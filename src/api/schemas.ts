@@ -93,6 +93,8 @@ export const PokePushPayload = z.object({
   senderHandle: z.string(),
   senderDisplayName: z.string(),
   stimulus: StimulusConfig,
+  /** Server-side accept time. The alert body renders it; clients may re-render it locally. */
+  sentAt: z.iso.datetime(),
 });
 
 /**

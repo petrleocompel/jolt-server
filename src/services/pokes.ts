@@ -118,6 +118,7 @@ export async function sendPoke(
     senderHandle: sender.handle,
     senderDisplayName: sender.name,
     stimulus,
+    sentAt: row.createdAt.toISOString(),
   }).catch((error) => console.error("[pokes] delivery failed", row.id, error));
 
   return toApi(row, senderId, recipient);

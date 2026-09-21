@@ -13,13 +13,16 @@ import { alertTextFor, testAlertTextFor } from "#/push/types";
  * Apple credentials. Always reports success.
  */
 export class ConsolePushSender implements PushSender {
-  constructor(private readonly log: (message: string) => void = console.log) {}
+  constructor(
+    private readonly log: (message: string) => void = console.log,
+    private readonly timeZone = "UTC",
+  ) {}
 
   async sendPoke(
     targets: Array<PushTarget>,
     payload: PokePushPayload,
   ): Promise<Array<PushResult>> {
-    const { title, body } = alertTextFor(payload);
+    const { title, body } = alertTextFor(payload, this.timeZone);
     const { kind, intensity, repetitions } = payload.stimulus;
 
     this.log(
@@ -38,7 +41,7 @@ export class ConsolePushSender implements PushSender {
     targets: Array<PushTarget>,
     payload: Omit<TestPushPayload, "deviceID">,
   ): Promise<Array<PushResult>> {
-    const { title, body } = testAlertTextFor(payload);
+    const { title, body } = testAlertTextFor(payload, this.timeZone);
     const stimulus = payload.stimulus
       ? `${payload.stimulus.kind} ${payload.stimulus.intensity}% x${payload.stimulus.repetitions}`
       : "notification only";

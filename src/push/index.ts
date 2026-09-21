@@ -19,6 +19,7 @@ export function pushSender(): PushSender {
       bundleId: env.APNS_BUNDLE_ID,
       keyP8: env.APNS_KEY_P8!,
       environment: env.APNS_ENV,
+      timeZone: env.PUSH_TIME_ZONE,
     });
   } else {
     if (env.NODE_ENV === "production") {
@@ -26,7 +27,7 @@ export function pushSender(): PushSender {
         "[push] APNS_* not configured in production — pokes will be recorded but never delivered",
       );
     }
-    sender = new ConsolePushSender();
+    sender = new ConsolePushSender(console.log, env.PUSH_TIME_ZONE);
   }
 
   return sender;

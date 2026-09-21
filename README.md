@@ -67,6 +67,13 @@ Generate a secret with `openssl rand -base64 48`.
 They cannot be merged: iOS suppresses the background wake when an `alert` is
 present in the same payload.
 
+The alert reads `Alice` / `zapped you — 30% x2 at 14:32 UTC`: how hard and
+when, because a poke arrives on a locked phone and "zapped you" alone does not
+say which of the last three it is. The time is rendered server-side in
+`PUSH_TIME_ZONE` (default `UTC`) and always names its zone — a client that
+wants the recipient's own local time has the raw `sentAt` in the payload and
+should prefer it.
+
 Without `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_P8`, the server falls back
 to `ConsolePushSender`, which logs what it would have sent. Everything else —
 permission checks, cooldowns, event rows, acks — works unchanged, so the whole

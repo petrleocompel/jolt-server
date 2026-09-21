@@ -628,17 +628,25 @@ components:
         `poke` keys alongside it. Best effort: it may fire the stimulus
         without the recipient touching anything, but iOS gives no
         delivery-time guarantee and throttles these aggressively.
-      required: [pokeID, senderHandle, senderDisplayName, stimulus]
+      required: [pokeID, senderHandle, senderDisplayName, stimulus, sentAt]
       properties:
         pokeID: { type: string, format: uuid }
         senderHandle: { type: string }
         senderDisplayName: { type: string }
         stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+        sentAt:
+          type: string
+          format: date-time
+          description: >
+            When the server accepted the poke. The alert body already carries
+            a rendered time, but in the *server's* configured zone
+            (`PUSH_TIME_ZONE`) — a client that wants the recipient's own local
+            time formats this instead.
       example:
         aps:
           alert:
             title: Alice
-            body: zapped you!
+            body: zapped you — 30% at 14:32 UTC
           sound: default
         type: poke
         poke:
@@ -646,6 +654,7 @@ components:
           senderHandle: alice
           senderDisplayName: Alice
           stimulus: { kind: zap, intensity: 30, repetitions: 1 }
+          sentAt: '2026-09-21T14:32:00Z'
 
     Device:
       type: object
@@ -753,7 +762,7 @@ components:
         aps:
           alert:
             title: Jolt
-            body: Test notification — push delivery works.
+            body: Test notification — push delivery works, sent 10:15 UTC.
           sound: default
         type: test
         test:
