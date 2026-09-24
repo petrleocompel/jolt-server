@@ -86,12 +86,23 @@ export const PokeEvent = z.object({
   stimulus: StimulusConfig,
   status: PokeDeliveryStatus,
   createdAt: z.iso.datetime(),
+  /** When the recipient's device reported back. Null while `pending`. */
+  ackedAt: z.iso.datetime().nullable(),
 });
 
 export const PokePushPayload = z.object({
   pokeID: z.uuid(),
   senderHandle: z.string(),
   senderDisplayName: z.string(),
+  /**
+   * Who the poke is *for*. A device can be registered to only one account at
+   * a time, but a stale registration (account switched, token reassigned)
+   * used to be invisible: a push addressed to somebody else arrived, fired,
+   * and the only trace was an ack the server 404'd. A client that knows its
+   * own handle can now drop a poke that isn't its own instead of shocking
+   * the wrong person.
+   */
+  recipientHandle: z.string(),
   stimulus: StimulusConfig,
   /** Server-side accept time. The alert body renders it; clients may re-render it locally. */
   sentAt: z.iso.datetime(),
@@ -194,6 +205,9 @@ export const PushTokenBody = z.object({
   platform: z.enum(["ios"]),
 });
 
+/** Sign-out: drop this phone from the account it was registered to. */
+export const ForgetPushTokenBody = z.object({ token: z.string().min(1) });
+
 /**
  * Exactly one of handle / inviteCode — there is no discovery endpoint by
  * design, so a request always names someone specific.
@@ -221,10 +235,15 @@ export const AckBody = z.object({ status: AckableStatus });
  * `deviceId` omitted means every active device; `stimulus` omitted means
  * notification only, leaving the wearable alone.
  */
-export const TestPushBody = z.object({
-  deviceId: z.uuid().optional(),
-  stimulus: StimulusConfig.optional(),
-});
+export const TestPushBody = z
+  .object({
+    deviceId: z.uuid().optional(),
+    stimulus: StimulusConfig.optional(),
+  })
+  // Strict for the same reason as `SelfStimulusBody`: this one also fires at
+  // the caller's own devices, and both its fields are optional — a mistyped
+  // or misrouted body would otherwise be accepted whole.
+  .strict();
 
 export const TestPushAckBody = z.object({
   deviceId: z.uuid().optional(),
@@ -238,8 +257,18 @@ export const CreateApiTokenBody = z.object({
   expiresInDays: z.int().min(1).max(365).optional(),
 });
 
-/** What to fire at your own devices. No friend, no grant — just you. */
-export const SelfStimulusBody = z.object({ stimulus: StimulusConfig });
+/**
+ * What to fire at your own devices. No friend, no grant — just you.
+ *
+ * Strict on purpose, and the strictness is the feature. This body and
+ * `SendPokeBody` differ by exactly one field, so a caller that means
+ * `POST /pokes` but hits this path would otherwise have its `friendId`
+ * stripped by Zod's default and get a cheerful 201 — for a stimulus fired at
+ * *itself*. A poke addressed to somebody else must never quietly become a
+ * poke at the caller; `Unrecognized key: "friendId"` and a 400 says so on the
+ * first request instead of on the caller's wrist.
+ */
+export const SelfStimulusBody = z.object({ stimulus: StimulusConfig }).strict();
 
 export const PokesQuery = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),

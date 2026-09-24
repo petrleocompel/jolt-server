@@ -14,6 +14,7 @@ const payload: PokePushPayload = {
   pokeID: "poke-1",
   senderHandle: "alice",
   senderDisplayName: "Alice Example",
+  recipientHandle: "bob",
   stimulus: { kind: "zap", intensity: 30, repetitions: 2 },
   sentAt: "2026-09-21T14:32:00.000Z",
 };

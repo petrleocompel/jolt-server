@@ -125,8 +125,10 @@ export async function deliverToTarget(
   try {
     const alertOutcome = await sendOne(target.token, bodies.alertBody, {
       ...base,
-      // apns-id must be unique per push, so only the alert carries the
-      // poke/test id; reusing it would let APNs collapse the two.
+      // apns-id identifies one notification, so it must be unique per push:
+      // the caller passes a fresh UUID per target, and only the alert half
+      // carries it — putting the same id on the silent half would let APNs
+      // collapse the pair into one.
       "apns-id": apnsID,
       "apns-push-type": "alert",
       "apns-priority": 10,
@@ -265,7 +267,12 @@ export class ApnsPushSender implements PushSender {
 
     return Promise.all(
       targets.map((target) =>
-        deliverToTarget(target, bodies, base, payload.pokeID, (deviceToken, body, headers) =>
+        // A fresh `apns-id` per push, not the poke id: `apns-id` identifies
+        // one notification, and a poke fans out to every device the recipient
+        // has. Reusing it across them is the collision `sendTest` already
+        // avoids for the same reason. The poke id is still in the payload and
+        // in the delivery log, so a push stays traceable to its row.
+        deliverToTarget(target, bodies, base, crypto.randomUUID(), (deviceToken, body, headers) =>
           this.send(deviceToken, body, headers),
         ),
       ),

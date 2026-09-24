@@ -25,6 +25,24 @@ export async function registerToken(
     });
 }
 
+/**
+ * The other half of `registerToken`: this phone is no longer this account's.
+ *
+ * Called on sign-out, because the row survives it otherwise. A phone that
+ * signed in as someone else and then signed out stayed a delivery target for
+ * that account until something re-registered the token — so a poke sent *to*
+ * that account fired on a wrist that had nothing to do with it.
+ *
+ * Scoped to the caller: a token that belongs to somebody else is left alone
+ * and reported as gone all the same, since a 404 here would only tell an
+ * attacker which tokens are live.
+ */
+export async function unregisterToken(userId: string, token: string): Promise<void> {
+  await db
+    .delete(deviceToken)
+    .where(and(eq(deviceToken.userId, userId), eq(deviceToken.token, token)));
+}
+
 /** Every live device for a user — poke pushes fan out to all of them. */
 export async function activeTargets(userId: string): Promise<Array<PushTarget>> {
   const rows = await db

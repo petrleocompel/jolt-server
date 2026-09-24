@@ -25,6 +25,7 @@ function toApi(
     },
     status: row.status,
     createdAt: row.createdAt.toISOString(),
+    ackedAt: row.ackedAt?.toISOString() ?? null,
   };
 }
 
@@ -111,12 +112,21 @@ export async function sendPoke(
 
   if (!row) throw ApiError.notFound("Could not record the poke.");
 
+  // One line per accepted poke, naming both ends. Without it a "why did my
+  // phone just fire?" report has nothing to check against: the push itself
+  // leaves no trace, and `poke_event` alone can't say which request made it.
+  console.log(
+    `[pokes] ${row.id}: @${sender.handle} -> @${recipient.handle} ` +
+      `${stimulus.kind} ${stimulus.intensity}% x${stimulus.repetitions}`,
+  );
+
   // Delivery is best-effort and must not fail the request: the event is
   // already recorded, and the recipient's ack is what settles the status.
   void deliver(row.id, friendId, {
     pokeID: row.id,
     senderHandle: sender.handle,
     senderDisplayName: sender.name,
+    recipientHandle: recipient.handle,
     stimulus,
     sentAt: row.createdAt.toISOString(),
   }).catch((error) => console.error("[pokes] delivery failed", row.id, error));
@@ -157,43 +167,64 @@ export async function sendSelfStimulus(
     throw ApiError.tooManyRequests("Too fast — one self-stimulus per second.");
   }
 
-  const [me] = await db.select().from(userTable).where(eq(userTable.id, userId)).limit(1);
-  if (!me) throw ApiError.unauthorized();
-
-  // Checked up front rather than left to the fire-and-forget delivery below:
-  // an integration that gets 201 for a stimulus nobody could possibly receive
-  // has been told the opposite of what happened.
-  const targets = await activeTargets(userId);
-  if (targets.length === 0) {
-    throw ApiError.notFound(
-      "No registered devices. Open the app and allow notifications first.",
-    );
-  }
-
-  const [row] = await db
-    .insert(pokeEvent)
-    .values({
-      senderId: userId,
-      recipientId: userId,
-      kind: stimulus.kind,
-      intensity: stimulus.intensity,
-      repetitions: stimulus.repetitions,
-      status: "pending",
-    })
-    .returning();
-
-  if (!row) throw ApiError.notFound("Could not record the stimulus.");
+  // Reserved here rather than after the inserts below: three awaits separate
+  // the check from the write, and two requests arriving inside that window
+  // would both read an empty slot and both fire. Restored on the way out if
+  // this attempt never becomes a stimulus — a rejected call must not eat the
+  // caller's next second.
   lastSelfStimulusAt.set(userId, now);
 
-  void deliver(row.id, userId, {
-    pokeID: row.id,
-    senderHandle: me.handle,
-    senderDisplayName: me.name,
-    stimulus,
-    sentAt: row.createdAt.toISOString(),
-  }).catch((error) => console.error("[pokes] self delivery failed", row.id, error));
+  try {
+    const [me] = await db.select().from(userTable).where(eq(userTable.id, userId)).limit(1);
+    if (!me) throw ApiError.unauthorized();
 
-  return toApi(row, userId, me);
+    // Checked up front rather than left to the fire-and-forget delivery
+    // below: an integration that gets 201 for a stimulus nobody could
+    // possibly receive has been told the opposite of what happened.
+    const targets = await activeTargets(userId);
+    if (targets.length === 0) {
+      throw ApiError.notFound(
+        "No registered devices. Open the app and allow notifications first.",
+      );
+    }
+
+    const [row] = await db
+      .insert(pokeEvent)
+      .values({
+        senderId: userId,
+        recipientId: userId,
+        kind: stimulus.kind,
+        intensity: stimulus.intensity,
+        repetitions: stimulus.repetitions,
+        status: "pending",
+      })
+      .returning();
+
+    if (!row) throw ApiError.notFound("Could not record the stimulus.");
+
+    // Logged as loudly as a real poke, and marked: a self-stimulus is the one
+    // thing that fires at the account that asked for it, so it is the first
+    // thing to rule out when somebody is poked by their own send.
+    console.log(
+      `[pokes] ${row.id}: @${me.handle} -> @${me.handle} (self) ` +
+        `${stimulus.kind} ${stimulus.intensity}% x${stimulus.repetitions}`,
+    );
+
+    void deliver(row.id, userId, {
+      pokeID: row.id,
+      senderHandle: me.handle,
+      senderDisplayName: me.name,
+      recipientHandle: me.handle,
+      stimulus,
+      sentAt: row.createdAt.toISOString(),
+    }).catch((error) => console.error("[pokes] self delivery failed", row.id, error));
+
+    return toApi(row, userId, me);
+  } catch (error) {
+    if (previous === undefined) lastSelfStimulusAt.delete(userId);
+    else lastSelfStimulusAt.set(userId, previous);
+    throw error;
+  }
 }
 
 /** Test seam — the rate-limit map outlives a single vitest case otherwise. */

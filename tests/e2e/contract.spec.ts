@@ -122,6 +122,7 @@ test("full poke lifecycle", async ({ request }) => {
     const poke = await response.json();
     expect(poke.status).toBe("pending");
     expect(poke.direction).toBe("sent");
+    expect(poke.ackedAt).toBeNull();
     pokeId = poke.id;
   });
 
@@ -139,7 +140,12 @@ test("full poke lifecycle", async ({ request }) => {
       data: { status: "deviceNotConnected" },
     });
     expect(second.status()).toBe(200);
-    expect((await second.json()).status).toBe("fired");
+    const settled = await second.json();
+    expect(settled.status).toBe("fired");
+    // Set by the first ack and unchanged by the second — the detail screen
+    // reads this to say when a poke actually landed.
+    expect(settled.ackedAt).not.toBeNull();
+    expect(new Date(settled.ackedAt).getTime()).not.toBeNaN();
   });
 
   await test.step("both sides see the event, with opposite directions", async () => {
@@ -209,6 +215,7 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
   const erin = await signup(request, `erin${unique()}`);
   let token = "";
   let tokenId = "";
+  const pushToken = `e2e-${unique()}${unique()}`;
 
   await test.step("minting one returns the secret exactly once", async () => {
     const response = await request.post(`${API}/me/tokens`, {
@@ -252,10 +259,25 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
     expect(response.status()).toBe(404);
   });
 
+  await test.step("a poke body sent here is a 400, not a stimulus at the caller", async () => {
+    // `/me/stimulus` and `POST /pokes` differ by one field. Getting them
+    // confused used to cost the caller a shock: the unknown `friendId` was
+    // stripped and the stimulus fired at whoever held the credential.
+    const response = await request.post(`${API}/me/stimulus`, {
+      headers: auth(token),
+      data: {
+        friendId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+        stimulus: { kind: "zap", intensity: 90, repetitions: 1 },
+      },
+    });
+    expect(response.status()).toBe(400);
+    expect((await response.json()).message).toContain("friendId");
+  });
+
   await test.step("with a device it lands in the activity feed, acked as usual", async () => {
     const registered = await request.post(`${API}/devices/push-token`, {
       headers: auth(erin.token),
-      data: { token: `e2e-${unique()}${unique()}`, platform: "ios" },
+      data: { token: pushToken, platform: "ios" },
     });
     expect(registered.status()).toBe(204);
 
@@ -287,6 +309,35 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
       data: { stimulus: { kind: "vibe", intensity: 10, repetitions: 1 } },
     });
     expect(response.status()).toBe(429);
+  });
+
+  await test.step("signing out forgets the device, so pokes stop arriving on it", async () => {
+    // The row outlived the session before this endpoint existed: a phone that
+    // had been signed in as someone else stayed a delivery target for that
+    // account, and their pokes fired on a wrist that had nothing to do with
+    // them.
+    const forgotten = await request.delete(`${API}/devices/push-token`, {
+      headers: auth(erin.token),
+      data: { token: pushToken },
+    });
+    expect(forgotten.status()).toBe(204);
+
+    const devices = await request.get(`${API}/devices`, { headers: auth(erin.token) });
+    const suffix = pushToken.slice(-8);
+    expect(
+      (await devices.json()).some((d: { tokenSuffix: string }) => d.tokenSuffix === suffix),
+    ).toBe(false);
+
+    // Forgetting a token that is already gone is a no-op, not a 404 — a
+    // sign-out that runs twice must not fail the second time.
+    expect(
+      (
+        await request.delete(`${API}/devices/push-token`, {
+          headers: auth(erin.token),
+          data: { token: pushToken },
+        })
+      ).status(),
+    ).toBe(204);
   });
 
   await test.step("revoking stops it working immediately", async () => {

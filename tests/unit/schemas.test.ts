@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   AckBody,
   PokeDeliveryStatus,
+  SelfStimulusBody,
   SendFriendRequestBody,
+  SendPokeBody,
   SignupBody,
   StimulusConfig,
+  TestPushBody,
 } from "#/api/schemas";
 
 describe("StimulusConfig", () => {
@@ -60,5 +63,46 @@ describe("SignupBody", () => {
   it("requires an 8-character password", () => {
     const base = { email: "a@b.co", handle: "alice", displayName: "A" };
     expect(SignupBody.safeParse({ ...base, password: "short" }).success).toBe(false);
+  });
+});
+
+describe("SelfStimulusBody", () => {
+  const stimulus = { kind: "zap", intensity: 30, repetitions: 2 };
+
+  it("accepts a stimulus on its own", () => {
+    expect(SelfStimulusBody.safeParse({ stimulus }).success).toBe(true);
+  });
+
+  /**
+   * The bug this pins down: `/me/stimulus` fires at the *caller*, and its
+   * body differs from `POST /pokes` by one field. Zod strips unknown keys by
+   * default, so a poke body sent here used to lose its `friendId` and return
+   * 201 for a stimulus fired at the sender — a poke meant for a friend,
+   * delivered to the person who sent it.
+   */
+  it("rejects a poke body instead of quietly poking the caller", () => {
+    const result = SelfStimulusBody.safeParse({
+      friendId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+      stimulus,
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toContain("friendId");
+  });
+
+  it("still routes a real poke to /pokes, which requires the friend", () => {
+    expect(SendPokeBody.safeParse({ stimulus }).success).toBe(false);
+  });
+});
+
+describe("TestPushBody", () => {
+  it("accepts an empty body — every field is optional", () => {
+    expect(TestPushBody.safeParse({}).success).toBe(true);
+  });
+
+  // Same reasoning as SelfStimulusBody: this endpoint also fires at the
+  // caller's own devices, and with both fields optional an unknown key would
+  // otherwise sail through unnoticed.
+  it("rejects an unknown field", () => {
+    expect(TestPushBody.safeParse({ friendId: "someone-else" }).success).toBe(false);
   });
 });

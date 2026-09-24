@@ -16,6 +16,14 @@ export interface PokePushPayload {
   pokeID: string;
   senderHandle: string;
   senderDisplayName: string;
+  /**
+   * Who the poke is addressed to. A device is registered to one account at a
+   * time, but a stale registration used to be undetectable from the payload:
+   * the push arrived, fired, and the only trace was an ack the server 404'd.
+   * A client that knows its own handle can drop a poke meant for somebody
+   * else instead of shocking the wrong wrist.
+   */
+  recipientHandle: string;
   stimulus: StimulusConfig;
   /**
    * When the server accepted the poke, ISO-8601. The alert body already

@@ -132,6 +132,12 @@ paths:
 
 
         Rate limited to one per second per account.
+
+
+        The body is **strict**: any unknown field is a 400. This one differs
+        from `POST /pokes` by a single field, and a caller that means to poke
+        a friend but sends `{ friendId, stimulus }` here would otherwise have
+        `friendId` dropped and be told 201 — for a stimulus fired at itself.
       requestBody:
         required: true
         content:
@@ -139,6 +145,7 @@ paths:
             schema:
               type: object
               required: [stimulus]
+              additionalProperties: false
               properties:
                 stimulus: { $ref: '#/components/schemas/StimulusConfig' }
       responses:
@@ -246,6 +253,30 @@ paths:
                 platform: { type: string, enum: [ios] }
       responses:
         '204': { description: Registered }
+    delete:
+      tags: [devices]
+      summary: Forget this device's APNs token on sign-out
+      description: >
+        The other half of the POST. Without it the registration outlives the
+        session: a phone that signed in as someone else and signed out again
+        stays a delivery target for that account until something re-registers
+        the token, so a poke sent *to* that account fires on a wrist that has
+        nothing to do with it.
+
+
+        Scoped to the caller — a token registered to another account is left
+        alone, and the response is 204 either way.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string, description: Hex-encoded APNs device token }
+      responses:
+        '204': { description: Forgotten, or never registered here }
 
   /devices:
     get:
@@ -719,7 +750,7 @@ components:
 
     PokeEvent:
       type: object
-      required: [id, direction, friendHandle, friendDisplayName, stimulus, status, createdAt]
+      required: [id, direction, friendHandle, friendDisplayName, stimulus, status, createdAt, ackedAt]
       properties:
         id: { type: string, format: uuid }
         direction: { type: string, enum: [sent, received] }
@@ -728,6 +759,13 @@ components:
         stimulus: { $ref: '#/components/schemas/StimulusConfig' }
         status: { $ref: '#/components/schemas/PokeDeliveryStatus' }
         createdAt: { type: string, format: date-time }
+        ackedAt:
+          type: [string, 'null']
+          format: date-time
+          description: >
+            When the recipient's device reported back, i.e. when `status`
+            stopped being `pending`. Null until then — and possibly forever,
+            since iOS guarantees no delivery for the silent push.
 
     PokePushPayload:
       type: object
@@ -754,11 +792,20 @@ components:
         `poke` keys alongside it. Best effort: it may fire the stimulus
         without the recipient touching anything, but iOS gives no
         delivery-time guarantee and throttles these aggressively.
-      required: [pokeID, senderHandle, senderDisplayName, stimulus, sentAt]
+      required: [pokeID, senderHandle, senderDisplayName, recipientHandle, stimulus, sentAt]
       properties:
         pokeID: { type: string, format: uuid }
         senderHandle: { type: string }
         senderDisplayName: { type: string }
+        recipientHandle:
+          type: string
+          description: >
+            Who the poke is addressed to. A device is registered to exactly
+            one account at a time, but a stale registration (account switched,
+            token reassigned) is otherwise invisible from the payload: the
+            push arrives, the wearable fires, and the only trace is an ack the
+            server 404s. A client that knows its own handle should compare it
+            and drop a poke addressed to somebody else rather than fire it.
         stimulus: { $ref: '#/components/schemas/StimulusConfig' }
         sentAt:
           type: string
@@ -779,6 +826,7 @@ components:
           pokeID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
           senderHandle: alice
           senderDisplayName: Alice
+          recipientHandle: bob
           stimulus: { kind: zap, intensity: 30, repetitions: 1 }
           sentAt: '2026-09-21T14:32:00Z'
 

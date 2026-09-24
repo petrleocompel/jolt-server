@@ -26,7 +26,7 @@ export class ConsolePushSender implements PushSender {
     const { kind, intensity, repetitions } = payload.stimulus;
 
     this.log(
-      `[push] poke ${payload.pokeID} — "${title}: ${body}" ` +
+      `[push] poke ${payload.pokeID} -> @${payload.recipientHandle} — "${title}: ${body}" ` +
         `(${kind} ${intensity}% x${repetitions}) -> ${targets.length} device(s); ` +
         `would send 1 alert + 1 background push each`,
     );

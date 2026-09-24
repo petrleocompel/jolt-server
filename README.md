@@ -132,6 +132,11 @@ curl -X POST https://jolt.example/api/v1/me/stimulus \
   -d '{"stimulus":{"kind":"vibe","intensity":20,"repetitions":1}}'
 ```
 
+The body is **strict**: an unknown field is a 400. It differs from
+`POST /pokes` by one field, and a caller that means to poke a friend but posts
+`{ friendId, stimulus }` here would otherwise have `friendId` stripped and be
+told 201 — for a stimulus fired at itself.
+
 Only the sha256 of a token is stored, so the secret is returned exactly once,
 at creation, and a lost one is replaced rather than looked up. A token reaches
 `GET /me` and `POST /me/stimulus` and nothing else — anywhere else it is a
