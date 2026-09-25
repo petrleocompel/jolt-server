@@ -157,6 +157,37 @@ test("full poke lifecycle", async ({ request }) => {
     expect((await received.json())[0]).toMatchObject({ direction: "received", status: "fired" });
   });
 
+  await test.step("a retry with the same pokeId is answered, not sent again", async () => {
+    // The phone lost the connection after sending, and asks again. The retry
+    // must land *inside* the cooldown the original started, and still be a
+    // 200 — it is the same poke, not a new one.
+    await request.put(`${API}/friends/${alice.user.id}/permissions/beep`, {
+      headers: auth(bob.token),
+      data: { isAllowed: true, maxIntensity: 100, cooldownSeconds: 300 },
+    });
+    const pokeId = crypto.randomUUID();
+    const body = { friendId: bob.user.id, stimulus: { kind: "beep", intensity: 5, repetitions: 1 }, pokeId };
+
+    const first = await request.post(`${API}/pokes`, { headers: auth(alice.token), data: body });
+    expect(first.status()).toBe(201);
+    expect((await first.json()).id).toBe(pokeId);
+
+    const retry = await request.post(`${API}/pokes`, { headers: auth(alice.token), data: body });
+    expect(retry.status()).toBe(200);
+    expect((await retry.json()).id).toBe(pokeId);
+
+    // Exactly one of it in the feed.
+    const feed = await (await request.get(`${API}/pokes`, { headers: auth(alice.token) })).json();
+    expect(feed.filter((e: { id: string }) => e.id === pokeId)).toHaveLength(1);
+
+    // Someone else cannot claim it.
+    const stolen = await request.post(`${API}/pokes`, {
+      headers: auth(bob.token),
+      data: { ...body, friendId: alice.user.id },
+    });
+    expect(stolen.status()).toBe(409);
+  });
+
   await test.step("cooldown is enforced server-side", async () => {
     await request.put(`${API}/friends/${alice.user.id}/permissions/vibe`, {
       headers: auth(bob.token),

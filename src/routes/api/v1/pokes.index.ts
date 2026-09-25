@@ -14,7 +14,9 @@ export const Route = createFileRoute("/api/v1/pokes/")({
       POST: handler(async (request) => {
         const me = await requireUser(request);
         const body = await parseBody(request, SendPokeBody);
-        return json(await sendPoke(me.id, body.friendId, body.stimulus), 201);
+        const { event, replayed } = await sendPoke(me.id, body.friendId, body.stimulus, body.pokeId);
+        // 200, not 201, for a `pokeId` already on record: nothing was created.
+        return json(event, replayed ? 200 : 201);
       }),
     },
   },

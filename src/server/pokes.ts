@@ -13,5 +13,5 @@ export const fetchActivity = createServerFn({ method: "GET" })
 export const submitPoke = createServerFn({ method: "POST" })
   .validator(z.object({ friendId: z.uuid(), stimulus: StimulusConfig }))
   .handler(async ({ data }) =>
-    sendPoke((await requireUserOrRedirect()).id, data.friendId, data.stimulus),
+    (await sendPoke((await requireUserOrRedirect()).id, data.friendId, data.stimulus)).event,
   );

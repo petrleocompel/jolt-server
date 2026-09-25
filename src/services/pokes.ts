@@ -30,17 +30,50 @@ function toApi(
 }
 
 /**
+ * The poke already recorded under a client-chosen id, if the same sender
+ * recorded it. A retry is answered from here, before any check that could
+ * now fail — a cooldown started *by the original*, a grant withdrawn since —
+ * because the poke it asks about has already been sent.
+ */
+async function replayOf(
+  pokeId: string,
+  senderId: string,
+): Promise<{ event: PokeEvent; replayed: true } | null> {
+  const [existing] = await db.select().from(pokeEvent).where(eq(pokeEvent.id, pokeId)).limit(1);
+  if (!existing) return null;
+  // Someone else's id is a conflict, not a replay — and says nothing about it.
+  if (existing.senderId !== senderId) throw ApiError.conflict("That poke id is already in use.");
+  const [recipient] = await db
+    .select()
+    .from(userTable)
+    .where(eq(userTable.id, existing.recipientId))
+    .limit(1);
+  if (!recipient) throw ApiError.notFound("Not friends with that user.");
+  console.log(`[pokes] ${pokeId}: retried — already recorded, not sent again`);
+  return { event: toApi(existing, senderId, recipient), replayed: true };
+}
+
+/**
  * Sends a poke. The composer clamps client-side for UX, but that is not
  * authoritative — permission, intensity cap and cooldown are all re-checked
  * here before anything is recorded or pushed.
+ *
+ * `pokeId` makes it idempotent: a client that lost the connection before the
+ * answer arrived can send the same request again, and gets back the poke
+ * that was recorded instead of a second one on its friend's wrist.
  */
 export async function sendPoke(
   senderId: string,
   friendId: string,
   stimulus: StimulusConfig,
-): Promise<PokeEvent> {
+  pokeId?: string,
+): Promise<{ event: PokeEvent; replayed: boolean }> {
   if (senderId === friendId) {
     throw ApiError.forbidden("You can't poke yourself.");
+  }
+  if (pokeId) {
+    const replay = await replayOf(pokeId, senderId);
+    if (replay) return replay;
   }
   if (!(await areFriends(senderId, friendId))) {
     // Deliberately the same 403 as a missing grant: a non-friend learns
@@ -101,6 +134,7 @@ export async function sendPoke(
   const [row] = await db
     .insert(pokeEvent)
     .values({
+      ...(pokeId ? { id: pokeId } : {}),
       senderId,
       recipientId: friendId,
       kind: stimulus.kind,
@@ -108,9 +142,16 @@ export async function sendPoke(
       repetitions: stimulus.repetitions,
       status: "pending",
     })
+    // Two copies of the same retry racing each other: exactly one inserts,
+    // the other finds it below and answers as a replay.
+    .onConflictDoNothing({ target: pokeEvent.id })
     .returning();
 
-  if (!row) throw ApiError.notFound("Could not record the poke.");
+  if (!row) {
+    const replay = pokeId ? await replayOf(pokeId, senderId) : null;
+    if (replay) return replay;
+    throw ApiError.notFound("Could not record the poke.");
+  }
 
   // One line per accepted poke, naming both ends. Without it a "why did my
   // phone just fire?" report has nothing to check against: the push itself
@@ -131,7 +172,7 @@ export async function sendPoke(
     sentAt: row.createdAt.toISOString(),
   }).catch((error) => console.error("[pokes] delivery failed", row.id, error));
 
-  return toApi(row, senderId, recipient);
+  return { event: toApi(row, senderId, recipient), replayed: false };
 }
 
 /**

@@ -569,7 +569,31 @@ paths:
               properties:
                 friendId: { type: string, format: uuid }
                 stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+                pokeId:
+                  type: string
+                  format: uuid
+                  description: >
+                    Optional, chosen by the client. Sending the same `pokeId`
+                    again answers `200` with the poke already recorded rather
+                    than sending a second one — so a client that lost the
+                    connection before the answer arrived can retry safely, or
+                    look the id up in `GET /pokes` to learn whether it landed.
+                    Omit it and every request is a new poke.
       responses:
+        '200':
+          description: >
+            A retry: this `pokeId` was already recorded by the same sender. The
+            original is returned as it stands and nothing is pushed again.
+            Permission and cooldown are not re-checked — the poke was already
+            sent.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PokeEvent' }
+        '409':
+          description: The `pokeId` belongs to another sender's poke.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '201':
           description: >
             Poke accepted and queued for push delivery. `status` is always

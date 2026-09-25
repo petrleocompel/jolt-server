@@ -228,6 +228,13 @@ export const SendPokeBody = z.object({
   // case-sensitive `text` columns, but a client may send any casing.
   friendId: z.uuid().toLowerCase(),
   stimulus: StimulusConfig,
+  /**
+   * Client-chosen id for this poke. Sending the same one again returns the
+   * poke already recorded instead of poking twice — what makes a retry after
+   * a dropped connection safe, and what lets the client look the poke up in
+   * the activity feed to learn whether it went through.
+   */
+  pokeId: z.uuid().toLowerCase().optional(),
 });
 
 export const AckBody = z.object({ status: AckableStatus });
