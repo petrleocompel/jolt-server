@@ -1,4 +1,5 @@
 import { z } from "zod";
+import "#/lib/zod-locale";
 
 /**
  * Runtime mirror of openapi/jolt-v1.yaml. The YAML is the canonical contract;

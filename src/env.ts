@@ -1,4 +1,5 @@
 import { z } from "zod";
+import "#/lib/zod-locale";
 
 /**
  * Server-only environment. Never import this from a component that ships to
