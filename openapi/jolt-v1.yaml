@@ -531,7 +531,16 @@ paths:
     put:
       tags: [friends]
       summary: Set what this friend is allowed to send you, for one stimulus kind
-      description: Always edits *your* grant to them — never the reverse.
+      description: >
+        Always edits *your* grant to them — never the reverse.
+
+
+        `isAllowed`, `maxIntensity` and `cooldownSeconds` overwrite, as they
+        always have. `automationAllowed` does not: leaving the key out keeps
+        whatever answer is stored (an app built before it existed sends only
+        the other three, and must not wipe an answer given elsewhere), while
+        `null` explicitly resets it to the server default. Read-only response
+        keys such as `automationAllowedEffective` are ignored if sent.
       parameters:
         - $ref: '#/components/parameters/FriendId'
         - $ref: '#/components/parameters/StimulusKindParam'
@@ -539,7 +548,7 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/StimulusPermission' }
+            schema: { $ref: '#/components/schemas/StimulusPermissionUpdate' }
       responses:
         '200':
           description: Updated
@@ -727,7 +736,10 @@ paths:
             "pokes:send" scope.`, `This token isn't allowed to poke that
             friend.` for a friend outside a `selected` token's list, or a
             stimulus outside the token's limits (`This token can't send
-            zap.`, `Intensity exceeds this token's cap of 30.`).
+            zap.`, `Intensity exceeds this token's cap of 30.`), or a
+            recipient who has not allowed automated pokes of that stimulus
+            from you (`They haven't allowed automated pokes of that
+            stimulus.` — see `StimulusPermission.automationAllowed`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -836,7 +848,7 @@ components:
 
     StimulusPermission:
       type: object
-      required: [isAllowed, maxIntensity, cooldownSeconds]
+      required: [isAllowed, maxIntensity, cooldownSeconds, automationAllowed, automationAllowedEffective]
       properties:
         isAllowed: { type: boolean }
         maxIntensity: { type: integer, minimum: 0, maximum: 100 }
@@ -844,6 +856,38 @@ components:
           type: integer
           minimum: 0
           description: Minimum seconds between pokes of this kind from this friend; enforced server-side.
+        automationAllowed:
+          type: boolean
+          nullable: true
+          description: >
+            The granter's explicit answer to "may this friend's automations
+            (pokes sent with their personal access tokens) send me this
+            too?". Null means no answer yet, which follows the server policy
+            (`Me.policies.automationConsentRequired`). An explicit answer
+            always wins, and a policy change never rewrites it. Only matters
+            while `isAllowed` is true; self-stimuli are never subject to it.
+        automationAllowedEffective:
+          type: boolean
+          description: >
+            Whether automated pokes are accepted right now:
+            `automationAllowed`, or — when that is null — true unless the
+            server requires consent. Read-only.
+
+    StimulusPermissionUpdate:
+      type: object
+      description: >
+        Body of `PUT /friends/{friendId}/permissions/{stimulusKind}`. The
+        three grant keys overwrite. `automationAllowed` is optional and
+        three-valued: absent leaves the stored answer unchanged, `true` /
+        `false` set it, `null` resets it to the server default.
+      required: [isAllowed, maxIntensity, cooldownSeconds]
+      properties:
+        isAllowed: { type: boolean }
+        maxIntensity: { type: integer, minimum: 0, maximum: 100 }
+        cooldownSeconds: { type: integer, minimum: 0 }
+        automationAllowed:
+          type: boolean
+          nullable: true
 
     FriendPermissionSet:
       type: object
@@ -861,16 +905,31 @@ components:
         handle: { type: string }
         displayName: { type: string }
 
+    ServerPolicies:
+      type: object
+      description: Server-wide rules a client may want to explain to its user.
+      required: [automationConsentRequired]
+      properties:
+        automationConsentRequired:
+          type: boolean
+          description: >
+            True: a friend's automated pokes are blocked until you allow them
+            (per friend and stimulus, `automationAllowed: true`). False: they
+            are allowed unless you block them. Set by the server operator —
+            either the `AUTOMATION_CONSENT_REQUIRED` environment variable or
+            an admin.
+
     Me:
       allOf:
         - $ref: '#/components/schemas/User'
         - type: object
-          required: [email, inviteCode]
+          required: [email, inviteCode, policies]
           properties:
             email: { type: string, format: email }
             inviteCode:
               type: string
               description: Shown as text + QR in the app's "Add friend" sheet so someone else can add you.
+            policies: { $ref: '#/components/schemas/ServerPolicies' }
 
     AuthResponse:
       type: object

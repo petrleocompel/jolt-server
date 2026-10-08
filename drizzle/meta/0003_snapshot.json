@@ -1,5 +1,5 @@
 {
-  "id": "9ecd2bfb-1da4-4b46-a165-fe5e6f47979e",
+  "id": "5ac3cb4d-83a9-4434-a2c9-a04b2846adc6",
   "prevId": "a708ba94-b322-407d-b655-2967a03ee55f",
   "version": "7",
   "dialect": "postgresql",
@@ -505,6 +505,12 @@
           "primaryKey": false,
           "notNull": true,
           "default": 0
+        },
+        "automation_allowed": {
+          "name": "automation_allowed",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
         },
         "updated_at": {
           "name": "updated_at",
@@ -1103,6 +1109,58 @@
           "value": "\"poke_event\".\"repetitions\" >= 1 AND \"poke_event\".\"repetitions\" <= 5"
         }
       },
+      "isRLSEnabled": false
+    },
+    "public.server_setting": {
+      "name": "server_setting",
+      "schema": "",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "server_setting_updated_by_user_id_fk": {
+          "name": "server_setting_updated_by_user_id_fk",
+          "tableFrom": "server_setting",
+          "tableTo": "user",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
       "isRLSEnabled": false
     },
     "public.session": {

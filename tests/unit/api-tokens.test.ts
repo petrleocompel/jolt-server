@@ -10,6 +10,9 @@ import { describe, expect, it, vi } from "vitest";
  * a unit test has no reason to have.
  */
 vi.mock("#/db", () => ({ db: {} }));
+// Reached through the friends service, which reads the server policy; the
+// environment itself is beside the point here.
+vi.mock("#/env", () => ({ env: {} }));
 
 const { generateApiToken, hashToken, isApiTokenCandidate } = await import(
   "#/services/api-tokens"

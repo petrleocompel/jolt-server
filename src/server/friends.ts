@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { SendFriendRequestBody, StimulusKind, StimulusPermission } from "#/api/schemas";
+import { SendFriendRequestBody, StimulusKind, StimulusPermissionUpdate } from "#/api/schemas";
 import {
   acceptRequest,
   listFriends,
@@ -11,10 +11,17 @@ import {
   unfriend,
 } from "#/services/friends";
 import { requireUserOrRedirect } from "#/server/session.server";
+import { serverPolicies } from "#/services/settings";
 
 export const fetchFriends = createServerFn({ method: "GET" }).handler(async () =>
   listFriends((await requireUserOrRedirect()).id),
 );
+
+/** What a null automation answer currently means — /dashboard/permissions says so. */
+export const fetchServerPolicies = createServerFn({ method: "GET" }).handler(async () => {
+  await requireUserOrRedirect();
+  return serverPolicies();
+});
 
 export const fetchRequests = createServerFn({ method: "GET" }).handler(async () =>
   listRequests((await requireUserOrRedirect()).id),
@@ -47,7 +54,7 @@ export const updatePermission = createServerFn({ method: "POST" })
     z.object({
       friendId: z.uuid(),
       kind: StimulusKind,
-      permission: StimulusPermission,
+      permission: StimulusPermissionUpdate,
     }),
   )
   .handler(async ({ data }) =>

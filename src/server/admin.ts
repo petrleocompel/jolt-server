@@ -1,15 +1,16 @@
 import { createServerFn } from "@tanstack/react-start";
-import { desc, eq, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import QRCode from "qrcode";
 import { db } from "#/db";
-import { deviceToken, pokeEvent, user as userTable } from "#/db/schema";
+import { deviceToken, friendPermission, pokeEvent, user as userTable } from "#/db/schema";
 import { StimulusConfig } from "#/api/schemas";
 import { requireAdminOrRedirect, requireUserOrRedirect } from "#/server/session.server";
 import { statusBreakdown } from "#/services/pokes";
 import { sendTestPush } from "#/services/push-test";
 import { hasApnsCredentials } from "#/env";
+import { automationConsentPolicy, setAutomationConsentRequired } from "#/services/settings";
 
 /** Route guard for the /admin shell — redirects non-admins away. */
 export const assertAdmin = createServerFn({ method: "GET" }).handler(async () => {
@@ -134,3 +135,32 @@ export const qrForInvite = createServerFn({ method: "GET" }).handler(async () =>
     dataUrl: await QRCode.toDataURL(me.inviteCode, { margin: 1, width: 256 }),
   };
 });
+
+/**
+ * /admin/settings. Besides the setting itself, how many grants would change
+ * meaning if consent became required: every allowed (granter, grantee,
+ * kind) whose owner never answered the automation question is, today,
+ * open to automations — and would stop accepting them the moment the
+ * policy flips. Explicit answers are unaffected either way.
+ */
+export const fetchServerSettings = createServerFn({ method: "GET" }).handler(async () => {
+  await requireAdminOrRedirect();
+  const [policy, [unanswered]] = await Promise.all([
+    automationConsentPolicy(),
+    db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(friendPermission)
+      .where(and(eq(friendPermission.isAllowed, true), isNull(friendPermission.automationAllowed))),
+  ]);
+  return {
+    automationConsentRequired: policy,
+    unansweredAllowedGrants: unanswered?.n ?? 0,
+  };
+});
+
+export const updateAutomationConsentRequired = createServerFn({ method: "POST" })
+  .validator(z.object({ required: z.boolean() }))
+  .handler(async ({ data }) => {
+    const admin = await requireAdminOrRedirect();
+    return setAutomationConsentRequired(data.required, admin.id);
+  });

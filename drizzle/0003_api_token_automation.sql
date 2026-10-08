@@ -6,6 +6,13 @@ CREATE TABLE "api_token_friend" (
 	CONSTRAINT "api_token_friend_token_id_friend_id_pk" PRIMARY KEY("token_id","friend_id")
 );
 --> statement-breakpoint
+CREATE TABLE "server_setting" (
+	"key" text PRIMARY KEY NOT NULL,
+	"value" jsonb NOT NULL,
+	"updated_at" timestamp with time zone DEFAULT now() NOT NULL,
+	"updated_by" text
+);
+--> statement-breakpoint
 -- Hand-edited: tokens minted before scopes existed could only reach GET /me
 -- and POST /me/stimulus, so they get exactly `stimulus:self` — behaviour
 -- unchanged. The default exists only to backfill them and is dropped at
@@ -17,10 +24,12 @@ ALTER TABLE "api_token" ADD COLUMN "allowed_kinds" "stimulus_kind"[];--> stateme
 ALTER TABLE "api_token" ADD COLUMN "max_intensity" integer;--> statement-breakpoint
 ALTER TABLE "api_token" ADD COLUMN "min_interval_seconds" integer DEFAULT 1 NOT NULL;--> statement-breakpoint
 ALTER TABLE "api_token" ADD COLUMN "last_fired_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "friend_permission" ADD COLUMN "automation_allowed" boolean;--> statement-breakpoint
 ALTER TABLE "poke_event" ADD COLUMN "source" "poke_source" DEFAULT 'app' NOT NULL;--> statement-breakpoint
 ALTER TABLE "poke_event" ADD COLUMN "api_token_id" uuid;--> statement-breakpoint
 ALTER TABLE "api_token_friend" ADD CONSTRAINT "api_token_friend_token_id_api_token_id_fk" FOREIGN KEY ("token_id") REFERENCES "public"."api_token"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "api_token_friend" ADD CONSTRAINT "api_token_friend_friend_id_user_id_fk" FOREIGN KEY ("friend_id") REFERENCES "public"."user"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "server_setting" ADD CONSTRAINT "server_setting_updated_by_user_id_fk" FOREIGN KEY ("updated_by") REFERENCES "public"."user"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "api_token_friend_friend_idx" ON "api_token_friend" USING btree ("friend_id");--> statement-breakpoint
 ALTER TABLE "poke_event" ADD CONSTRAINT "poke_event_api_token_id_api_token_id_fk" FOREIGN KEY ("api_token_id") REFERENCES "public"."api_token"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "poke_event_api_token_idx" ON "poke_event" USING btree ("api_token_id") WHERE "poke_event"."api_token_id" IS NOT NULL;--> statement-breakpoint

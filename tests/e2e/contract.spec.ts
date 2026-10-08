@@ -1,4 +1,5 @@
 import { expect, test  } from "@playwright/test";
+import postgres from "postgres";
 import type {APIRequestContext} from "@playwright/test";
 
 /**
@@ -661,4 +662,107 @@ test("a token's own limits narrow the grant, and its interval holds under a burs
       minIntervalSeconds: 60,
     });
   });
+});
+
+test("automated pokes need the recipient's consent, per friend and kind", async ({ request }) => {
+  const alice = await signup(request, `alice${unique()}`);
+  const bob = await signup(request, `bob${unique()}`);
+  await befriend(request, alice, bob);
+  const vibe = { kind: "vibe", intensity: 20, repetitions: 1 };
+  const grant = { isAllowed: true, maxIntensity: 80, cooldownSeconds: 0 };
+  const put = (data: object) =>
+    request.put(`${API}/friends/${alice.user.id}/permissions/vibe`, {
+      headers: auth(bob.token),
+      data,
+    });
+  const pokeWith = async (token: string) =>
+    request.post(`${API}/pokes`, {
+      headers: auth(token),
+      data: { friendId: bob.user.id, stimulus: vibe },
+    });
+
+  // The policy has no HTTP surface beyond the admin page, so the test flips
+  // the row the admin page writes. Nothing caches it, so it applies at once.
+  const sql = postgres(process.env.E2E_DATABASE_URL ?? "postgres://jolt:jolt@127.0.0.1:5433/jolt_e2e", {
+    max: 1,
+  });
+  try {
+    await test.step("by default a grant lets automations through, unanswered", async () => {
+      const me = await (await request.get(`${API}/me`, { headers: auth(bob.token) })).json();
+      expect(me.policies).toEqual({ automationConsentRequired: false });
+
+      const response = await put(grant);
+      expect(await response.json()).toEqual({
+        ...grant,
+        automationAllowed: null,
+        automationAllowedEffective: true,
+      });
+      const script = await mint(request, alice, { name: "default", scopes: ["pokes:send"] });
+      expect((await pokeWith(script.token)).status()).toBe(201);
+    });
+
+    const script = await mint(request, alice, { name: "consent", scopes: ["pokes:send"] });
+
+    await test.step("an explicit no blocks the script, not the person", async () => {
+      const response = await put({ ...grant, automationAllowed: false });
+      expect(await response.json()).toMatchObject({
+        automationAllowed: false,
+        automationAllowedEffective: false,
+      });
+      const blocked = await pokeWith(script.token);
+      expect(blocked.status()).toBe(403);
+      expect((await blocked.json()).message).toBe(
+        "They haven't allowed automated pokes of that stimulus.",
+      );
+      const inPerson = await request.post(`${API}/pokes`, {
+        headers: auth(alice.token),
+        data: { friendId: bob.user.id, stimulus: vibe },
+      });
+      expect(inPerson.status()).toBe(201);
+    });
+
+    await test.step("an app that predates the key cannot wipe the answer", async () => {
+      // An old build sends exactly these three keys as a full overwrite.
+      const response = await put({ ...grant, maxIntensity: 70 });
+      expect(await response.json()).toMatchObject({
+        maxIntensity: 70,
+        automationAllowed: false,
+        automationAllowedEffective: false,
+      });
+    });
+
+    await test.step("null hands the decision back to the server", async () => {
+      const response = await put({ ...grant, automationAllowed: null });
+      expect(await response.json()).toMatchObject({
+        automationAllowed: null,
+        automationAllowedEffective: true,
+      });
+      expect((await pokeWith(script.token)).status()).toBe(201);
+    });
+
+    await test.step("once consent is required, unanswered grants refuse scripts", async () => {
+      await sql`
+        insert into server_setting (key, value) values ('automation_consent_required', 'true'::jsonb)
+        on conflict (key) do update set value = excluded.value
+      `;
+      const me = await (await request.get(`${API}/me`, { headers: auth(alice.token) })).json();
+      expect(me.policies).toEqual({ automationConsentRequired: true });
+      const friends = await (await request.get(`${API}/friends`, { headers: auth(alice.token) })).json();
+      expect(friends[0].permissionsGrantedToMe.vibe).toMatchObject({
+        automationAllowed: null,
+        automationAllowedEffective: false,
+      });
+      expect((await pokeWith(script.token)).status()).toBe(403);
+    });
+
+    await test.step("and an explicit yes still lets them through", async () => {
+      await put({ ...grant, automationAllowed: true });
+      // A fresh token: the last one fired a moment ago and is inside its interval.
+      const fresh = await mint(request, alice, { name: "fresh", scopes: ["pokes:send"] });
+      expect((await pokeWith(fresh.token)).status()).toBe(201);
+    });
+  } finally {
+    await sql`delete from server_setting where key = 'automation_consent_required'`;
+    await sql.end();
+  }
 });

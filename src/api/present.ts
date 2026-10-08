@@ -1,14 +1,15 @@
 import type { PokeEvent as PokeEventRow, User } from "#/db/schema";
-import type { Me, PokeEvent } from "#/api/schemas";
+import type { Me, PokeEvent, ServerPolicies } from "#/api/schemas";
 
 /** DB row -> the `Me` component. `displayName` is Better Auth's `name`. */
-export function presentMe(row: User): Me {
+export function presentMe(row: User, policies: ServerPolicies): Me {
   return {
     id: row.id,
     handle: row.handle,
     displayName: row.name,
     email: row.email,
     inviteCode: row.inviteCode,
+    policies,
   };
 }
 

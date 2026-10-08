@@ -17,10 +17,37 @@ export const StimulusConfig = z.object({
   repetitions: z.int().min(1).max(5),
 });
 
-export const StimulusPermission = z.object({
+/** The three keys every client has always sent and read. */
+const StimulusGrant = z.object({
   isAllowed: z.boolean(),
   maxIntensity: z.int().min(0).max(100),
   cooldownSeconds: z.int().min(0),
+});
+
+/**
+ * One direction of one stimulus between two friends, as the server reports
+ * it. The automation keys are additions: an app built before them ignores
+ * them and keeps working.
+ */
+export const StimulusPermission = StimulusGrant.extend({
+  /**
+   * The granter's explicit answer to "may their automations (API tokens)
+   * send me this?" — or null for no answer, which follows the server policy.
+   */
+  automationAllowed: z.boolean().nullable(),
+  /** What actually applies right now: the answer, or the policy for null. */
+  automationAllowedEffective: z.boolean(),
+});
+
+/**
+ * The body of `PUT /friends/{id}/permissions/{kind}`. The three grant keys
+ * overwrite, as they always have. `automationAllowed` is different on
+ * purpose: *absent* leaves the stored answer alone — an app that predates it
+ * sends only the three, and must not wipe an answer it cannot see — while
+ * `null` explicitly hands the decision back to the server policy.
+ */
+export const StimulusPermissionUpdate = StimulusGrant.extend({
+  automationAllowed: z.boolean().nullable().optional(),
 });
 
 export const FriendPermissionSet = z.object({
@@ -35,9 +62,19 @@ export const User = z.object({
   displayName: z.string(),
 });
 
+/** Server-wide rules a client may want to explain to its user. */
+export const ServerPolicies = z.object({
+  /**
+   * True: a friend's automations may not poke you until you allow them, per
+   * friend and kind. False: they may, unless you turn them off.
+   */
+  automationConsentRequired: z.boolean(),
+});
+
 export const Me = User.extend({
   email: z.email(),
   inviteCode: z.string(),
+  policies: ServerPolicies,
 });
 
 export const AuthResponse = z.object({
@@ -350,6 +387,8 @@ export const PokesQuery = z.object({
 export type StimulusKind = z.infer<typeof StimulusKind>;
 export type StimulusConfig = z.infer<typeof StimulusConfig>;
 export type StimulusPermission = z.infer<typeof StimulusPermission>;
+export type StimulusPermissionUpdate = z.infer<typeof StimulusPermissionUpdate>;
+export type ServerPolicies = z.infer<typeof ServerPolicies>;
 export type FriendPermissionSet = z.infer<typeof FriendPermissionSet>;
 export type Me = z.infer<typeof Me>;
 export type Friend = z.infer<typeof Friend>;
@@ -376,8 +415,10 @@ export const components = {
   StimulusKind,
   StimulusConfig,
   StimulusPermission,
+  StimulusPermissionUpdate,
   FriendPermissionSet,
   User,
+  ServerPolicies,
   Me,
   AuthResponse,
   Friend,

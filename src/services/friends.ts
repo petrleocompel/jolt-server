@@ -8,9 +8,10 @@ import {
   friendship,
   user as userTable,
 } from "#/db/schema";
-import type { User } from "#/db/schema";
+import type { FriendPermission, User } from "#/db/schema";
 import { ApiError } from "#/api/errors";
 import { normalizeHandle } from "#/lib/invite";
+import { automationConsentPolicy, effectiveAutomationAllowed } from "#/services/settings";
 import { tokenReachesFriend } from "#/services/token-access";
 import type { ApiTokenContext } from "#/services/token-access";
 import type {
@@ -19,6 +20,7 @@ import type {
   FriendRequest,
   StimulusKind,
   StimulusPermission,
+  StimulusPermissionUpdate,
 } from "#/api/schemas";
 
 const KINDS = ["zap", "vibe", "beep"] as const;
@@ -28,10 +30,53 @@ function pair(a: string, b: string): { userA: string; userB: string } {
   return a < b ? { userA: a, userB: b } : { userA: b, userB: a };
 }
 
-const DISABLED: StimulusPermission = { isAllowed: false, maxIntensity: 0, cooldownSeconds: 0 };
+/**
+ * A stored grant as the API reports it. `consentRequired` is the server
+ * policy, needed to say what a null automation answer currently means.
+ */
+export function presentPermission(
+  row: Pick<FriendPermission, "isAllowed" | "maxIntensity" | "cooldownSeconds" | "automationAllowed">,
+  consentRequired: boolean,
+): StimulusPermission {
+  return {
+    isAllowed: row.isAllowed,
+    maxIntensity: row.maxIntensity,
+    cooldownSeconds: row.cooldownSeconds,
+    automationAllowed: row.automationAllowed,
+    automationAllowedEffective: effectiveAutomationAllowed(row.automationAllowed, consentRequired),
+  };
+}
 
-export function emptyPermissionSet(): FriendPermissionSet {
-  return { zap: { ...DISABLED }, vibe: { ...DISABLED }, beep: { ...DISABLED } };
+/** What a missing row means: nothing allowed, no automation answer yet. */
+const DISABLED = { isAllowed: false, maxIntensity: 0, cooldownSeconds: 0, automationAllowed: null };
+
+export function emptyPermissionSet(consentRequired: boolean): FriendPermissionSet {
+  return {
+    zap: presentPermission(DISABLED, consentRequired),
+    vibe: presentPermission(DISABLED, consentRequired),
+    beep: presentPermission(DISABLED, consentRequired),
+  };
+}
+
+/**
+ * The columns a `PUT .../permissions/{kind}` writes. The grant keys always
+ * overwrite. `automationAllowed` is written only when the body has the key:
+ * an app that predates it sends the three grant keys alone, and that must
+ * never wipe an answer the user gave somewhere else. `null` is a real value
+ * here — "back to the server default" — and is written.
+ */
+export function permissionWrite(value: StimulusPermissionUpdate): {
+  isAllowed: boolean;
+  maxIntensity: number;
+  cooldownSeconds: number;
+  automationAllowed?: boolean | null;
+} {
+  return {
+    isAllowed: value.isAllowed,
+    maxIntensity: value.maxIntensity,
+    cooldownSeconds: value.cooldownSeconds,
+    ...(value.automationAllowed !== undefined ? { automationAllowed: value.automationAllowed } : {}),
+  };
 }
 
 function toApiUser(row: Pick<User, "id" | "handle" | "name">) {
@@ -71,7 +116,7 @@ export async function listFriends(
   );
   if (friendIds.length === 0) return [];
 
-  const [people, permissions] = await Promise.all([
+  const [people, permissions, policy] = await Promise.all([
     db.select().from(userTable).where(inArray(userTable.id, friendIds)),
     db
       .select()
@@ -82,6 +127,7 @@ export async function listFriends(
           and(eq(friendPermission.granteeId, userId), inArray(friendPermission.granterId, friendIds)),
         ),
       ),
+    automationConsentPolicy(),
   ]);
 
   const byId = new Map(people.map((p) => [p.id, p]));
@@ -90,16 +136,12 @@ export async function listFriends(
   const granted = new Map<string, FriendPermissionSet>();
   const receivedFrom = new Map<string, FriendPermissionSet>();
   for (const id of friendIds) {
-    granted.set(id, emptyPermissionSet());
-    receivedFrom.set(id, emptyPermissionSet());
+    granted.set(id, emptyPermissionSet(policy.value));
+    receivedFrom.set(id, emptyPermissionSet(policy.value));
   }
 
   for (const row of permissions) {
-    const value: StimulusPermission = {
-      isAllowed: row.isAllowed,
-      maxIntensity: row.maxIntensity,
-      cooldownSeconds: row.cooldownSeconds,
-    };
+    const value = presentPermission(row, policy.value);
     if (row.granterId === userId) {
       granted.get(row.granteeId)![row.kind] = value;
     } else {
@@ -163,28 +205,25 @@ export async function setPermission(
   granterId: string,
   granteeId: string,
   kind: StimulusKind,
-  value: StimulusPermission,
+  value: StimulusPermissionUpdate,
 ): Promise<StimulusPermission> {
   if (!(await areFriends(granterId, granteeId))) {
     throw ApiError.notFound("Not friends with that user.");
   }
 
+  const write = permissionWrite(value);
   const [row] = await db
     .insert(friendPermission)
-    .values({ granterId, granteeId, kind, ...value, updatedAt: new Date() })
+    .values({ granterId, granteeId, kind, ...write, updatedAt: new Date() })
     .onConflictDoUpdate({
       target: [friendPermission.granterId, friendPermission.granteeId, friendPermission.kind],
-      set: { ...value, updatedAt: new Date() },
+      set: { ...write, updatedAt: new Date() },
     })
     .returning();
 
   if (!row) throw ApiError.notFound("Not friends with that user.");
 
-  return {
-    isAllowed: row.isAllowed,
-    maxIntensity: row.maxIntensity,
-    cooldownSeconds: row.cooldownSeconds,
-  };
+  return presentPermission(row, (await automationConsentPolicy()).value);
 }
 
 // ---------------------------------------------------------------------------
@@ -342,6 +381,8 @@ export async function acceptRequest(userId: string, requestId: string): Promise<
 
     // Both sides start with every stimulus disabled until each grants
     // permissions — seeding all six rows keeps later PUTs a plain upsert.
+    // `automation_allowed` starts null: no answer yet, so the server policy
+    // decides until the person does.
     await tx
       .insert(friendPermission)
       .values(

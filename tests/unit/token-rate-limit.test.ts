@@ -12,6 +12,9 @@ import type { SQL } from "drizzle-orm";
 
 const execute = vi.fn();
 vi.mock("#/db", () => ({ db: { execute } }));
+// Reached through the friends service, which reads the server policy; the
+// environment itself is beside the point here.
+vi.mock("#/env", () => ({ env: {} }));
 
 const { reserveTokenFire } = await import("#/services/api-tokens");
 

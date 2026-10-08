@@ -2,6 +2,7 @@ import { APIError } from "better-auth/api";
 import { auth } from "#/auth/server";
 import { ApiError } from "#/api/errors";
 import { presentMe } from "#/api/present";
+import { serverPolicies } from "#/services/settings";
 import { db } from "#/db";
 import { user as userTable } from "#/db/schema";
 import { eq } from "drizzle-orm";
@@ -23,7 +24,7 @@ function isUniqueViolation(error: unknown): boolean {
 async function loadMe(userId: string) {
   const [row] = await db.select().from(userTable).where(eq(userTable.id, userId)).limit(1);
   if (!row) throw ApiError.unauthorized();
-  return presentMe(row);
+  return presentMe(row, await serverPolicies());
 }
 
 export async function signup(body: z.infer<typeof SignupBody>): Promise<AuthResponse> {

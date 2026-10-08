@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { LayoutDashboard, Send, Smartphone, Users } from "lucide-react";
+import { LayoutDashboard, Send, Settings, Smartphone, Users } from "lucide-react";
 import { AppShell } from "#/components/app-shell";
 import { assertAdmin } from "#/server/admin";
 import { fetchSession } from "#/server/session";
@@ -18,6 +18,7 @@ const NAV: Array<NavItem> = [
   { to: "/admin/users", label: "Users", icon: Users },
   { to: "/admin/pokes", label: "Pokes", icon: Send },
   { to: "/admin/devices", label: "Devices", icon: Smartphone },
+  { to: "/admin/settings", label: "Settings", icon: Settings },
 ];
 
 function AdminShell() {

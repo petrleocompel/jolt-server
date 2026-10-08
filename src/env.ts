@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseBooleanish } from "#/lib/booleanish";
 import "#/lib/zod-locale";
 
 /**
@@ -14,6 +15,24 @@ function isTimeZone(zone: string): boolean {
     return false;
   }
 }
+
+/**
+ * An optional yes/no variable. Unset and empty (`VAR=` in a .env file) both
+ * mean "not set"; anything else must read as a boolean or the server refuses
+ * to start — a typo here must not silently pick a side.
+ */
+const optionalBooleanish = z
+  .string()
+  .optional()
+  .transform((raw, ctx) => {
+    if (raw === undefined || raw.trim() === "") return undefined;
+    const parsed = parseBooleanish(raw);
+    if (parsed === null) {
+      ctx.addIssue({ code: "custom", message: "must be true/false, 1/0, yes/no or on/off" });
+      return z.NEVER;
+    }
+    return parsed;
+  });
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -50,6 +69,14 @@ const envSchema = z.object({
     .refine(isTimeZone, { message: "must be an IANA time zone, e.g. Europe/Prague" }),
 
   SENTRY_DSN: z.string().optional(),
+
+  /**
+   * Whether a friend's automation (a personal access token) may poke you
+   * before you have said yes. Unset: an admin decides at /admin/settings.
+   * Set: it wins, and the admin page shows it as locked — see
+   * src/services/settings.ts.
+   */
+  AUTOMATION_CONSENT_REQUIRED: optionalBooleanish,
 
   // Retention windows for the cron worker.
   POKE_EVENT_RETENTION_DAYS: z.coerce.number().int().positive().default(90),

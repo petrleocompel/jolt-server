@@ -9,6 +9,7 @@ import type { AckableStatus, PokeEvent, StimulusConfig } from "#/api/schemas";
 import { activeTargets, markUnregistered } from "#/services/devices";
 import { areFriends } from "#/services/friends";
 import { reserveTokenFire } from "#/services/api-tokens";
+import { automationConsentPolicy, effectiveAutomationAllowed } from "#/services/settings";
 import {
   describeToken,
   pokeVisibility,
@@ -113,6 +114,15 @@ export async function sendPoke(
 
   if (!grant?.isAllowed) {
     throw ApiError.forbidden("They haven't allowed that stimulus.");
+  }
+  // A grant to a friend is not automatically a grant to their scripts: the
+  // recipient answers that separately, per friend and kind, and the server
+  // policy decides while they haven't. Self-stimuli never get here.
+  if (token) {
+    const policy = await automationConsentPolicy();
+    if (!effectiveAutomationAllowed(grant.automationAllowed, policy.value)) {
+      throw ApiError.forbidden("They haven't allowed automated pokes of that stimulus.");
+    }
   }
   if (stimulus.intensity > grant.maxIntensity) {
     throw ApiError.forbidden(

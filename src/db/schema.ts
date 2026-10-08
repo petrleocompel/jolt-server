@@ -4,6 +4,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   primaryKey,
@@ -189,6 +190,13 @@ export const friendPermission = pgTable(
     maxIntensity: integer("max_intensity").notNull().default(0),
     /** Minimum seconds between pokes of this kind from this friend. */
     cooldownSeconds: integer("cooldown_seconds").notNull().default(0),
+    /**
+     * Whether this friend's automations (their personal access tokens) may
+     * send this kind too. Null is "no answer yet", which follows the server
+     * policy — allowed unless consent is required. An explicit answer always
+     * wins, and changing the policy never rewrites one.
+     */
+    automationAllowed: boolean("automation_allowed"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -342,6 +350,19 @@ export const apiTokenFriend = pgTable(
 );
 
 /**
+ * Server-wide settings an admin can change at runtime, one row per key.
+ * Read through src/services/settings.ts, which also lets an environment
+ * variable override — and lock — any of them.
+ */
+export const serverSetting = pgTable("server_setting", {
+  key: text("key").primaryKey(),
+  value: jsonb("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  /** The admin who last changed it; kept as history if they are deleted. */
+  updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
+});
+
+/**
  * One row per poke, shared by both participants. `direction` in the API is
  * derived per viewer rather than stored, so a poke can never disagree with
  * itself across the two activity feeds.
@@ -430,3 +451,4 @@ export type DeviceToken = typeof deviceToken.$inferSelect;
 export type ApiTokenRow = typeof apiToken.$inferSelect;
 export type ApiTokenFriendRow = typeof apiTokenFriend.$inferSelect;
 export type PokeEvent = typeof pokeEvent.$inferSelect;
+export type ServerSetting = typeof serverSetting.$inferSelect;
