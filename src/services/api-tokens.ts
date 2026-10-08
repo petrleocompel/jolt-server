@@ -69,6 +69,9 @@ function toApi(row: ApiTokenRow, friendIds: Array<string>): ApiToken {
     scopes: readScopes(row.scopes),
     friendScope: row.friendScope,
     friendIds: row.friendScope === "selected" ? [...friendIds].sort() : [],
+    allowedKinds: row.allowedKinds,
+    maxIntensity: row.maxIntensity,
+    minIntervalSeconds: row.minIntervalSeconds,
   };
 }
 
@@ -106,6 +109,9 @@ export async function createApiToken(
         expiresAt,
         scopes,
         friendScope: friendIds ? "selected" : "all",
+        allowedKinds: input.allowedKinds ? [...new Set(input.allowedKinds)] : null,
+        maxIntensity: input.maxIntensity ?? null,
+        minIntervalSeconds: input.minIntervalSeconds ?? 1,
       })
       .returning();
     if (!inserted) return null;
@@ -210,6 +216,74 @@ function toContext(row: ApiTokenRow, friendIds: Array<string>): ApiTokenContext 
     scopes: readScopes(row.scopes),
     friendScope: row.friendScope,
     friendIds: new Set(friendIds),
+    allowedKinds: row.allowedKinds,
+    maxIntensity: row.maxIntensity,
+    minIntervalSeconds: row.minIntervalSeconds,
+  };
+}
+
+/**
+ * Claims this token's next firing slot, or throws 429 with how long to wait.
+ *
+ * One conditional UPDATE, so the check and the claim are the same statement:
+ * two requests racing on two instances cannot both see a free slot, and a
+ * restart forgets nothing — the slot lives in `api_token.last_fired_at`, not
+ * in a process. Call it as late as possible, after every other reason to
+ * refuse has been checked, so a refusal does not cost the caller their slot.
+ *
+ * Returns a release for the one failure left after that point — the insert
+ * itself. It puts back the previous value, but only if the slot is still
+ * ours: a request that has claimed it since keeps it.
+ */
+export async function reserveTokenFire(
+  token: Pick<ApiTokenContext, "id">,
+): Promise<() => Promise<void>> {
+  // `before` is read in the same statement, so the release can put back
+  // exactly what was there. Both go out as text: a timestamp round-tripped
+  // through a JS Date loses its microseconds and would never compare equal.
+  const claimed = await db.execute<{ previous: string | null; reserved: string }>(sql`
+    update ${apiToken} as t
+    set last_fired_at = now()
+    from (select last_fired_at from ${apiToken} where id = ${token.id}) as before
+    where t.id = ${token.id}
+      and (
+        t.last_fired_at is null
+        or t.last_fired_at <= now() - make_interval(secs => t.min_interval_seconds)
+      )
+    returning before.last_fired_at::text as previous, t.last_fired_at::text as reserved
+  `);
+
+  const slot = claimed[0];
+  if (!slot) {
+    const [state] = await db.execute<{ wait: number; interval: number }>(sql`
+      select
+        greatest(1, ceil(extract(epoch from
+          last_fired_at + make_interval(secs => min_interval_seconds) - now()
+        )))::int as wait,
+        min_interval_seconds as interval
+      from ${apiToken}
+      where id = ${token.id}
+    `);
+    // Revoked between authenticating and firing.
+    if (!state) throw ApiError.unauthorized("Invalid or expired API token.");
+    throw ApiError.tooManyRequests(
+      `Too fast — this token fires at most once every ${state.interval}s. ` +
+        `Try again in ${state.wait}s.`,
+    );
+  }
+
+  return async () => {
+    try {
+      await db.execute(sql`
+        update ${apiToken}
+        set last_fired_at = ${slot.previous}::timestamptz
+        where id = ${token.id} and last_fired_at = ${slot.reserved}::timestamptz
+      `);
+    } catch (error) {
+      // Worst case the caller waits one interval for nothing; the request
+      // is already failing for a better reason than this.
+      console.error("[api-tokens] could not release a firing slot", token.id, error);
+    }
   };
 }
 

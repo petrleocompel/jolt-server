@@ -275,12 +275,39 @@ export const apiToken = pgTable(
     scopes: text("scopes").array().notNull(),
     /** `selected` means only the friends listed in `api_token_friend`. */
     friendScope: apiTokenFriendScope("friend_scope").notNull().default("all"),
+    /**
+     * Limits the owner set at minting, applied on top of — never instead
+     * of — whatever the recipient's grant allows. Null kinds is every kind;
+     * null intensity is "the recipient's cap and nothing lower".
+     */
+    allowedKinds: stimulusKind("allowed_kinds").array(),
+    maxIntensity: integer("max_intensity"),
+    /** Minimum gap between two stimuli fired with this token, self or friend. */
+    minIntervalSeconds: integer("min_interval_seconds").notNull().default(1),
+    /**
+     * When this token last fired. Written only by the conditional UPDATE in
+     * `reserveTokenFire`, which is what makes `minIntervalSeconds` hold
+     * across instances and restarts rather than per process.
+     */
+    lastFiredAt: timestamp("last_fired_at", { withTimezone: true }),
   },
   (t) => [
     index("api_token_user_idx").on(t.userId),
     // An empty scope list is a token that can do nothing but `GET /me` —
     // never what anyone meant to mint.
     check("api_token_scopes_nonempty", sql`cardinality(${t.scopes}) > 0`),
+    check(
+      "api_token_allowed_kinds_nonempty",
+      sql`${t.allowedKinds} IS NULL OR cardinality(${t.allowedKinds}) > 0`,
+    ),
+    check(
+      "api_token_max_intensity_range",
+      sql`${t.maxIntensity} IS NULL OR (${t.maxIntensity} >= 0 AND ${t.maxIntensity} <= 100)`,
+    ),
+    check(
+      "api_token_min_interval_range",
+      sql`${t.minIntervalSeconds} >= 1 AND ${t.minIntervalSeconds} <= 86400`,
+    ),
   ],
 );
 

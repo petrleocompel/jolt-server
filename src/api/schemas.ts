@@ -202,6 +202,12 @@ export const ApiToken = z.object({
   friendScope: ApiTokenFriendScope,
   /** The friends a `selected` token reaches. Always empty for `all`. */
   friendIds: z.array(z.uuid()),
+  /** The kinds it may fire. Null is every kind. */
+  allowedKinds: z.array(StimulusKind).nullable(),
+  /** Its own intensity ceiling. Null leaves only the recipient's cap. */
+  maxIntensity: z.int().min(0).max(100).nullable(),
+  /** Minimum seconds between two stimuli fired with it, self or friend. */
+  minIntervalSeconds: z.int().min(1),
 });
 
 /** The one response that carries the secret. Store it now or mint a new one. */
@@ -297,6 +303,18 @@ export const CreateApiTokenBody = z
      * absent means every friend, now and later. Each must be a friend now.
      */
     friendIds: z.array(z.uuid().toLowerCase()).max(500).optional(),
+    /**
+     * Limits on what the token may fire, at yourself or at a friend. They
+     * only ever narrow the recipient's grant. Null or absent: no limit of
+     * the token's own.
+     */
+    allowedKinds: z.array(StimulusKind).min(1).max(StimulusKind.options.length).nullable().optional(),
+    maxIntensity: z.int().min(0).max(100).nullable().optional(),
+    /**
+     * At least a second: the floor that keeps a looping script from
+     * hammering APNs, whatever the recipient's cooldown says. A day at most.
+     */
+    minIntervalSeconds: z.int().min(1).max(86_400).optional(),
   })
   .strict();
 

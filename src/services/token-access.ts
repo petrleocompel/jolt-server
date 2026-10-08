@@ -1,5 +1,5 @@
 import { ApiTokenScope } from "#/api/schemas";
-import type { ApiTokenFriendScope } from "#/api/schemas";
+import type { ApiTokenFriendScope, StimulusConfig, StimulusKind } from "#/api/schemas";
 
 /**
  * What a personal access token may do, as pure functions of the token. No
@@ -24,6 +24,11 @@ export interface ApiTokenContext {
   friendScope: ApiTokenFriendScope;
   /** Only consulted when `friendScope` is `selected`. */
   friendIds: ReadonlySet<string>;
+  /** Null is every kind. */
+  allowedKinds: ReadonlyArray<StimulusKind> | null;
+  /** Null leaves only the recipient's cap. */
+  maxIntensity: number | null;
+  minIntervalSeconds: number;
 }
 
 /**
@@ -72,4 +77,23 @@ export function pokeVisibility(
 /** How a token names itself in a log line: never the secret, never enough to forge it. */
 export function describeToken(token: Pick<ApiTokenContext, "id" | "name">): string {
   return `API token ${token.id.slice(0, 8)} "${token.name}"`;
+}
+
+/**
+ * Why this token may not fire this stimulus, or null if it may. The token's
+ * own limits only — the recipient's grant is checked separately, and both
+ * have to pass, so a token can narrow what a friend allows but never widen
+ * it.
+ */
+export function tokenStimulusViolation(
+  token: Pick<ApiTokenContext, "allowedKinds" | "maxIntensity">,
+  stimulus: StimulusConfig,
+): string | null {
+  if (token.allowedKinds && !token.allowedKinds.includes(stimulus.kind)) {
+    return `This token can't send ${stimulus.kind}.`;
+  }
+  if (token.maxIntensity !== null && stimulus.intensity > token.maxIntensity) {
+    return `Intensity exceeds this token's cap of ${token.maxIntensity}.`;
+  }
+  return null;
 }

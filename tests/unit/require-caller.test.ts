@@ -37,6 +37,9 @@ function token(scopes: ApiTokenContext["scopes"]): ApiTokenContext {
     scopes,
     friendScope: "all",
     friendIds: new Set(),
+    allowedKinds: null,
+    maxIntensity: null,
+    minIntervalSeconds: 1,
   };
 }
 

@@ -137,7 +137,9 @@ paths:
         client fire it with no changes.
 
 
-        Rate limited to one per second per account.
+        Rate limited to one per second per account. Through a personal access
+        token, also subject to that token's own limits — `allowedKinds`,
+        `maxIntensity` and `minIntervalSeconds`.
 
 
         The body is **strict**: any unknown field is a 400. This one differs
@@ -165,8 +167,10 @@ paths:
               schema: { $ref: '#/components/schemas/PokeEvent' }
         '403':
           description: >
-            A personal access token without the `stimulus:self` scope —
-            `This token lacks the "stimulus:self" scope.`
+            A personal access token without the `stimulus:self` scope
+            (`This token lacks the "stimulus:self" scope.`), or a stimulus
+            outside the token's own limits (`This token can't send zap.`,
+            `Intensity exceeds this token's cap of 30.`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -176,7 +180,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
         '429':
-          description: More than one per second
+          description: >
+            More than one per second, or — through a personal access token —
+            sooner than the token's `minIntervalSeconds` allows
+            (`Too fast — this token fires at most once every 5s. Try again
+            in 3s.`).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -247,6 +255,34 @@ paths:
                     reaches only these friends (and an empty list reaches
                     nobody). Absent makes it `all`: every friend, including
                     ones added later. Each id must be a current friend.
+                allowedKinds:
+                  type: array
+                  nullable: true
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/StimulusKind' }
+                  description: >
+                    The kinds it may fire, at you or at a friend. Null or
+                    absent: every kind.
+                maxIntensity:
+                  type: integer
+                  nullable: true
+                  minimum: 0
+                  maximum: 100
+                  description: >
+                    Its own intensity ceiling, applied on top of the
+                    recipient's cap — the lower of the two wins. Null or
+                    absent: only the recipient's cap.
+                minIntervalSeconds:
+                  type: integer
+                  minimum: 1
+                  maximum: 86400
+                  default: 1
+                  description: >
+                    Minimum seconds between two stimuli fired with this
+                    token, self and friend pokes alike, on top of the
+                    recipient's cooldown and the one-per-second
+                    self-stimulus limit. Held in the database, so it holds
+                    across server instances and restarts.
       responses:
         '201':
           description: Created — save `token` now
@@ -632,8 +668,11 @@ paths:
 
 
         A personal access token needs `pokes:send` (or `*`), and may only
-        poke friends it reaches. It never widens what the friend has granted
-        you.
+        poke friends it reaches. Its own limits — `allowedKinds`,
+        `maxIntensity`, `minIntervalSeconds` — apply on top of the friend's
+        grant; a token can narrow what the friend allows you, never widen it.
+        A retry with a `pokeId` already on record is answered before any of
+        them, like every other check.
       security:
         - bearerAuth: []
         - patAuth: []
@@ -685,8 +724,18 @@ paths:
           description: >
             Recipient hasn't allowed this stimulus, or intensity exceeds their
             cap. With a personal access token, also: `This token lacks the
-            "pokes:send" scope.`, or `This token isn't allowed to poke that
-            friend.` for a friend outside a `selected` token's list.
+            "pokes:send" scope.`, `This token isn't allowed to poke that
+            friend.` for a friend outside a `selected` token's list, or a
+            stimulus outside the token's limits (`This token can't send
+            zap.`, `Intensity exceeds this token's cap of 30.`).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: >
+            Personal access token only: sooner than the token's
+            `minIntervalSeconds` allows. The recipient's own cooldown is
+            still a 403, as before.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1094,7 +1143,19 @@ components:
         A personal access token as listed back to its owner. The secret is
         returned exactly once, by `POST /me/tokens`, and only its hash is
         stored — there is no endpoint that can show it again.
-      required: [id, name, prefix, createdAt, lastUsedAt, expiresAt, scopes, friendScope, friendIds]
+      required:
+        - id
+        - name
+        - prefix
+        - createdAt
+        - lastUsedAt
+        - expiresAt
+        - scopes
+        - friendScope
+        - friendIds
+        - allowedKinds
+        - maxIntensity
+        - minIntervalSeconds
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -1124,6 +1185,21 @@ components:
           description: >
             The friends a `selected` token reaches. Always empty for `all`.
             Unfriending someone removes them from every token on both sides.
+        allowedKinds:
+          type: array
+          nullable: true
+          items: { $ref: '#/components/schemas/StimulusKind' }
+          description: The kinds it may fire. Null is every kind.
+        maxIntensity:
+          type: integer
+          nullable: true
+          minimum: 0
+          maximum: 100
+          description: Its own intensity ceiling. Null leaves only the recipient's cap.
+        minIntervalSeconds:
+          type: integer
+          minimum: 1
+          description: Minimum seconds between two stimuli fired with it.
 
     ApiTokenCreated:
       allOf:

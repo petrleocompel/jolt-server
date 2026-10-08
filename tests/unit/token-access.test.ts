@@ -5,6 +5,7 @@ import {
   readScopes,
   tokenHasScope,
   tokenReachesFriend,
+  tokenStimulusViolation,
 } from "#/services/token-access";
 import type { ApiTokenContext } from "#/services/token-access";
 
@@ -24,6 +25,9 @@ function token(overrides: Partial<ApiTokenContext> = {}): ApiTokenContext {
     scopes: ["stimulus:self"],
     friendScope: "all",
     friendIds: new Set(),
+    allowedKinds: null,
+    maxIntensity: null,
+    minIntervalSeconds: 1,
     ...overrides,
   };
 }
@@ -100,5 +104,32 @@ describe("pokeVisibility", () => {
 describe("describeToken", () => {
   it("names the token by id prefix and name, never by secret", () => {
     expect(describeToken(token())).toBe('API token 0b6c7c55 "home assistant"');
+  });
+});
+
+describe("tokenStimulusViolation", () => {
+  const zap = { kind: "zap", intensity: 40, repetitions: 1 } as const;
+
+  it("lets anything through a token with no limits of its own", () => {
+    // The recipient's grant still applies — this is only the token's half.
+    expect(tokenStimulusViolation(token(), { ...zap, intensity: 100 })).toBeNull();
+  });
+
+  it("refuses a kind the token was not minted for", () => {
+    const t = token({ allowedKinds: ["vibe", "beep"] });
+    expect(tokenStimulusViolation(t, zap)).toBe("This token can't send zap.");
+    expect(tokenStimulusViolation(t, { ...zap, kind: "vibe" })).toBeNull();
+  });
+
+  it("refuses an intensity above the token's own cap, and allows one at it", () => {
+    const t = token({ maxIntensity: 30 });
+    expect(tokenStimulusViolation(t, zap)).toBe("Intensity exceeds this token's cap of 30.");
+    expect(tokenStimulusViolation(t, { ...zap, intensity: 30 })).toBeNull();
+  });
+
+  it("treats a cap of 0 as a cap, not as no cap", () => {
+    expect(tokenStimulusViolation(token({ maxIntensity: 0 }), { ...zap, intensity: 1 })).not.toBe(
+      null,
+    );
   });
 });

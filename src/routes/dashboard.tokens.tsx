@@ -16,7 +16,13 @@ import {
 } from "#/components/ui/table";
 import { createMyApiToken, fetchMyApiTokens, revokeMyApiToken } from "#/server/api-tokens";
 import { fetchFriends } from "#/server/friends";
-import type { ApiToken, ApiTokenCreated, ApiTokenScope, Friend } from "#/api/schemas";
+import type {
+  ApiToken,
+  ApiTokenCreated,
+  ApiTokenScope,
+  Friend,
+  StimulusKind,
+} from "#/api/schemas";
 
 export const Route = createFileRoute("/dashboard/tokens")({
   loader: async () => {
@@ -45,6 +51,11 @@ const PRESETS: Array<{ label: string; scopes: Array<ApiTokenScope> }> = [
 /** Scopes that involve other people, and so make the friend picker matter. */
 const FRIEND_SCOPES: Array<ApiTokenScope> = ["*", "pokes:send", "friends:read", "pokes:read"];
 
+/** Scopes that fire something, and so make the limits matter. */
+const FIRING_SCOPES: Array<ApiTokenScope> = ["*", "stimulus:self", "pokes:send"];
+
+const KINDS: Array<StimulusKind> = ["zap", "vibe", "beep"];
+
 function sameScopes(a: Array<ApiTokenScope>, b: Array<ApiTokenScope>): boolean {
   return a.length === b.length && a.every((scope) => b.includes(scope));
 }
@@ -66,6 +77,10 @@ function Tokens() {
   const [scopes, setScopes] = useState<Array<ApiTokenScope>>(["stimulus:self"]);
   const [friendMode, setFriendMode] = useState<"all" | "selected">("all");
   const [friendIds, setFriendIds] = useState<Array<string>>([]);
+  const [kinds, setKinds] = useState<Array<StimulusKind>>(KINDS);
+  // Strings, because an empty box is a real answer ("no cap of its own").
+  const [maxIntensity, setMaxIntensity] = useState("");
+  const [minInterval, setMinInterval] = useState("1");
   const [created, setCreated] = useState<ApiTokenCreated | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const hydrated = useHydrated();
@@ -75,6 +90,13 @@ function Tokens() {
   // A `selected` token with nobody ticked is valid, but never what someone
   // filling in this form meant — the API allows it, the button does not.
   const friendsMissing = reachesFriends && friendMode === "selected" && friendIds.length === 0;
+  const fires = scopes.some((scope) => FIRING_SCOPES.includes(scope));
+  const intervalSeconds = Number(minInterval);
+  const cap = Number(maxIntensity);
+  const capInvalid = maxIntensity !== "" && !(Number.isInteger(cap) && cap >= 0 && cap <= 100);
+  const intervalInvalid =
+    !Number.isInteger(intervalSeconds) || intervalSeconds < 1 || intervalSeconds > 86_400;
+  const limitsInvalid = fires && (kinds.length === 0 || capInvalid || intervalInvalid);
 
   function toggleScope(scope: ApiTokenScope, on: boolean) {
     setScopes((current) =>
@@ -104,6 +126,15 @@ function Tokens() {
             // Sent only when it narrows something: a self-only token has no
             // friends to restrict, and `all` is the absence of a list.
             ...(reachesFriends && friendMode === "selected" ? { friendIds } : {}),
+            ...(fires
+              ? {
+                  // Every kind ticked is "no limit", not "these three": a
+                  // kind added later should not be locked out by omission.
+                  allowedKinds: kinds.length === KINDS.length ? null : kinds,
+                  maxIntensity: maxIntensity === "" ? null : cap,
+                  minIntervalSeconds: intervalSeconds,
+                }
+              : {}),
           },
         }),
       );
@@ -249,6 +280,64 @@ function Tokens() {
               </fieldset>
             )}
 
+            {fires && (
+              <fieldset className="grid gap-3">
+                <legend className="text-muted-foreground mb-1.5 text-xs font-medium">
+                  Limits — on top of whatever the recipient allows, never instead of it
+                </legend>
+                <div className="flex flex-wrap items-center gap-3 text-sm">
+                  <span className="text-muted-foreground text-xs">Kinds</span>
+                  {KINDS.map((kind) => (
+                    <label key={kind} className="flex items-center gap-1.5 capitalize">
+                      <input
+                        type="checkbox"
+                        className="accent-primary size-4"
+                        checked={kinds.includes(kind)}
+                        onChange={(event) =>
+                          setKinds((current) =>
+                            event.target.checked
+                              ? [...current.filter((k) => k !== kind), kind]
+                              : current.filter((k) => k !== kind),
+                          )
+                        }
+                      />
+                      {kind}
+                    </label>
+                  ))}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="token-max-intensity" className="text-muted-foreground text-xs">
+                      Max intensity (%) — blank: the recipient&apos;s cap
+                    </Label>
+                    <Input
+                      id="token-max-intensity"
+                      type="number"
+                      min={0}
+                      max={100}
+                      placeholder="no cap of its own"
+                      value={maxIntensity}
+                      onChange={(event) => setMaxIntensity(event.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label htmlFor="token-min-interval" className="text-muted-foreground text-xs">
+                      At most once every (seconds)
+                    </Label>
+                    <Input
+                      id="token-min-interval"
+                      type="number"
+                      min={1}
+                      max={86400}
+                      required
+                      value={minInterval}
+                      onChange={(event) => setMinInterval(event.target.value)}
+                    />
+                  </div>
+                </div>
+              </fieldset>
+            )}
+
             <div className="grid gap-1.5">
               <Label className="text-muted-foreground text-xs">Expires</Label>
               <div className="flex flex-wrap gap-1">
@@ -274,6 +363,7 @@ function Tokens() {
                   name.trim().length === 0 ||
                   scopes.length === 0 ||
                   friendsMissing ||
+                  limitsInvalid ||
                   !hydrated
                 }
               >
@@ -302,6 +392,7 @@ function Tokens() {
                   <TableHead>Token</TableHead>
                   <TableHead>May</TableHead>
                   <TableHead>Friends</TableHead>
+                  <TableHead>Limits</TableHead>
                   <TableHead>Created</TableHead>
                   <TableHead>Last used</TableHead>
                   <TableHead>Expires</TableHead>
@@ -327,6 +418,9 @@ function Tokens() {
                       </TableCell>
                       <TableCell className="text-muted-foreground text-xs">
                         <FriendReach token={token} friends={friends} />
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs whitespace-nowrap">
+                        <Limits token={token} />
                       </TableCell>
                       <TableCell className="text-muted-foreground whitespace-nowrap">
                         {new Date(token.createdAt).toLocaleDateString()}
@@ -365,6 +459,17 @@ function Tokens() {
       )}
     </div>
   );
+}
+
+/** "zap, vibe · ≤ 40% · every 5s" — what the token adds to each recipient's grant. */
+function Limits({ token }: { token: ApiToken }) {
+  if (!token.scopes.some((scope) => FIRING_SCOPES.includes(scope))) return <>—</>;
+  const parts = [
+    token.allowedKinds ? token.allowedKinds.join(", ") : "any kind",
+    token.maxIntensity === null ? "recipient's cap" : `≤ ${token.maxIntensity}%`,
+    `every ${token.minIntervalSeconds}s`,
+  ];
+  return <>{parts.join(" · ")}</>;
 }
 
 /** "all friends", "nobody", or the names on a `selected` token's list. */

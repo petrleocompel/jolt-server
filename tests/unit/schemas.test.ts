@@ -135,6 +135,20 @@ describe("CreateApiTokenBody", () => {
     expect(body.friendIds).toEqual([FRIEND]);
   });
 
+  it("bounds the token's own limits", () => {
+    const base = { name: "ci", scopes: ["pokes:send"] };
+    expect(CreateApiTokenBody.safeParse({ ...base, maxIntensity: 101 }).success).toBe(false);
+    expect(CreateApiTokenBody.safeParse({ ...base, maxIntensity: null }).success).toBe(true);
+    // A second is the floor: below it a script could hammer APNs.
+    expect(CreateApiTokenBody.safeParse({ ...base, minIntervalSeconds: 0 }).success).toBe(false);
+    expect(CreateApiTokenBody.safeParse({ ...base, allowedKinds: [] }).success).toBe(false);
+    expect(CreateApiTokenBody.safeParse({ ...base, allowedKinds: ["shock"] }).success).toBe(false);
+    expect(
+      CreateApiTokenBody.safeParse({ ...base, allowedKinds: ["vibe"], minIntervalSeconds: 30 })
+        .success,
+    ).toBe(true);
+  });
+
   /**
    * A misspelt `friendIds` stripped by Zod's default would mint a token that
    * reaches every friend instead of the one it named.

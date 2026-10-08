@@ -1,5 +1,5 @@
 {
-  "id": "817cebd4-9df9-4d6d-82ed-6b546b0633f8",
+  "id": "90bfb6b5-8bbc-4587-98e5-142343563c44",
   "prevId": "a708ba94-b322-407d-b655-2967a03ee55f",
   "version": "7",
   "dialect": "postgresql",
@@ -184,6 +184,32 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'all'"
+        },
+        "allowed_kinds": {
+          "name": "allowed_kinds",
+          "type": "stimulus_kind[]",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "max_intensity": {
+          "name": "max_intensity",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "min_interval_seconds": {
+          "name": "min_interval_seconds",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "last_fired_at": {
+          "name": "last_fired_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -233,6 +259,18 @@
         "api_token_scopes_nonempty": {
           "name": "api_token_scopes_nonempty",
           "value": "cardinality(\"api_token\".\"scopes\") > 0"
+        },
+        "api_token_allowed_kinds_nonempty": {
+          "name": "api_token_allowed_kinds_nonempty",
+          "value": "\"api_token\".\"allowed_kinds\" IS NULL OR cardinality(\"api_token\".\"allowed_kinds\") > 0"
+        },
+        "api_token_max_intensity_range": {
+          "name": "api_token_max_intensity_range",
+          "value": "\"api_token\".\"max_intensity\" IS NULL OR (\"api_token\".\"max_intensity\" >= 0 AND \"api_token\".\"max_intensity\" <= 100)"
+        },
+        "api_token_min_interval_range": {
+          "name": "api_token_min_interval_range",
+          "value": "\"api_token\".\"min_interval_seconds\" >= 1 AND \"api_token\".\"min_interval_seconds\" <= 86400"
         }
       },
       "isRLSEnabled": false

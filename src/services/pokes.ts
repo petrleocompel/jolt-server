@@ -7,7 +7,12 @@ import { pushSender } from "#/push";
 import type { AckableStatus, PokeEvent, StimulusConfig } from "#/api/schemas";
 import { activeTargets, markUnregistered } from "#/services/devices";
 import { areFriends } from "#/services/friends";
-import { pokeVisibility, tokenReachesFriend } from "#/services/token-access";
+import { reserveTokenFire } from "#/services/api-tokens";
+import {
+  pokeVisibility,
+  tokenReachesFriend,
+  tokenStimulusViolation,
+} from "#/services/token-access";
 import type { ApiTokenContext } from "#/services/token-access";
 
 function toApi(
@@ -66,7 +71,8 @@ async function replayOf(
  *
  * `token` is the personal access token the request came in on, or null for
  * the account holder in person. A token only ever narrows what the grant
- * allows: it may reach fewer friends, never more.
+ * allows: fewer friends, fewer kinds, a lower cap, and a firing interval of
+ * its own on top of the recipient's cooldown.
  */
 export async function sendPoke(
   senderId: string,
@@ -88,6 +94,8 @@ export async function sendPoke(
   if (token && !tokenReachesFriend(token, friendId)) {
     throw ApiError.forbidden("This token isn't allowed to poke that friend.");
   }
+  const violation = token ? tokenStimulusViolation(token, stimulus) : null;
+  if (violation) throw ApiError.forbidden(violation);
   if (!(await areFriends(senderId, friendId))) {
     // Deliberately the same 403 as a missing grant: a non-friend learns
     // nothing about whether the account exists.
@@ -144,23 +152,36 @@ export async function sendPoke(
   const [recipient] = await db.select().from(userTable).where(eq(userTable.id, friendId)).limit(1);
   if (!sender || !recipient) throw ApiError.notFound("Not friends with that user.");
 
-  const [row] = await db
-    .insert(pokeEvent)
-    .values({
-      ...(pokeId ? { id: pokeId } : {}),
-      senderId,
-      recipientId: friendId,
-      kind: stimulus.kind,
-      intensity: stimulus.intensity,
-      repetitions: stimulus.repetitions,
-      status: "pending",
-    })
-    // Two copies of the same retry racing each other: exactly one inserts,
-    // the other finds it below and answers as a replay.
-    .onConflictDoNothing({ target: pokeEvent.id })
-    .returning();
+  // Last, so nothing above can refuse a poke that has already spent the
+  // token's slot. Only the insert can still fail, and it gives the slot back.
+  const release = token ? await reserveTokenFire(token) : null;
+
+  let row: PokeEventRow | undefined;
+  try {
+    [row] = await db
+      .insert(pokeEvent)
+      .values({
+        ...(pokeId ? { id: pokeId } : {}),
+        senderId,
+        recipientId: friendId,
+        kind: stimulus.kind,
+        intensity: stimulus.intensity,
+        repetitions: stimulus.repetitions,
+        status: "pending",
+      })
+      // Two copies of the same retry racing each other: exactly one inserts,
+      // the other finds it below and answers as a replay.
+      .onConflictDoNothing({ target: pokeEvent.id })
+      .returning();
+  } catch (error) {
+    await release?.();
+    throw error;
+  }
 
   if (!row) {
+    // The poke this retry asks about was fired — and paid for — by the copy
+    // that won the race. This one fired nothing.
+    await release?.();
     const replay = pokeId ? await replayOf(pokeId, senderId) : null;
     if (replay) return replay;
     throw ApiError.notFound("Could not record the poke.");
@@ -210,7 +231,13 @@ const lastSelfStimulusAt = new Map<string, number>();
 export async function sendSelfStimulus(
   userId: string,
   stimulus: StimulusConfig,
+  token: ApiTokenContext | null = null,
 ): Promise<PokeEvent> {
+  // The token's own limits first: they need no I/O, and a stimulus the token
+  // may never send should not take the account's one-per-second slot.
+  const violation = token ? tokenStimulusViolation(token, stimulus) : null;
+  if (violation) throw ApiError.forbidden(violation);
+
   const now = Date.now();
   for (const [id, at] of lastSelfStimulusAt) {
     if (now - at > SELF_STIMULUS_INTERVAL_MS) lastSelfStimulusAt.delete(id);
@@ -228,6 +255,7 @@ export async function sendSelfStimulus(
   // caller's next second.
   lastSelfStimulusAt.set(userId, now);
 
+  let releaseToken: (() => Promise<void>) | null = null;
   try {
     const [me] = await db.select().from(userTable).where(eq(userTable.id, userId)).limit(1);
     if (!me) throw ApiError.unauthorized();
@@ -241,6 +269,11 @@ export async function sendSelfStimulus(
         "No registered devices. Open the app and allow notifications first.",
       );
     }
+
+    // The token's interval, held in the database, on top of the per-account
+    // second held here. Claimed after the device check for the same reason
+    // the account slot is restored below: a refusal must not cost a slot.
+    if (token) releaseToken = await reserveTokenFire(token);
 
     const [row] = await db
       .insert(pokeEvent)
@@ -277,6 +310,7 @@ export async function sendSelfStimulus(
   } catch (error) {
     if (previous === undefined) lastSelfStimulusAt.delete(userId);
     else lastSelfStimulusAt.set(userId, previous);
+    await releaseToken?.();
     throw error;
   }
 }

@@ -7,9 +7,9 @@ export const Route = createFileRoute("/api/v1/me/stimulus")({
   server: {
     handlers: {
       POST: handler(async (request) => {
-        const { user } = await requireCaller(request, { scope: "stimulus:self" });
+        const { user, token } = await requireCaller(request, { scope: "stimulus:self" });
         const body = await parseBody(request, SelfStimulusBody);
-        return json(await sendSelfStimulus(user.id, body.stimulus), 201);
+        return json(await sendSelfStimulus(user.id, body.stimulus, token), 201);
       }),
     },
   },

@@ -544,3 +544,92 @@ test("a scoped token pokes only the friends it was minted for", async ({ request
     expect(poke.status()).toBe(403);
   });
 });
+
+test("a token's own limits narrow the grant, and its interval holds under a burst", async ({
+  request,
+}) => {
+  const alice = await signup(request, `alice${unique()}`);
+  const bob = await signup(request, `bob${unique()}`);
+  await befriend(request, alice, bob);
+  for (const kind of ["zap", "vibe"]) {
+    await request.put(`${API}/friends/${alice.user.id}/permissions/${kind}`, {
+      headers: auth(bob.token),
+      data: { isAllowed: true, maxIntensity: 80, cooldownSeconds: 0 },
+    });
+  }
+  const limited = await mint(request, alice, {
+    name: "gentle",
+    scopes: ["pokes:send", "stimulus:self"],
+    allowedKinds: ["vibe"],
+    maxIntensity: 30,
+    minIntervalSeconds: 60,
+  });
+  const poke = (stimulus: object, pokeId?: string) =>
+    request.post(`${API}/pokes`, {
+      headers: auth(limited.token),
+      data: { friendId: bob.user.id, stimulus, ...(pokeId ? { pokeId } : {}) },
+    });
+
+  await test.step("a kind or intensity the token excludes is a 403, and costs nothing", async () => {
+    const zap = await poke({ kind: "zap", intensity: 10, repetitions: 1 });
+    expect(zap.status()).toBe(403);
+    expect((await zap.json()).message).toBe("This token can't send zap.");
+
+    // Bob allows 80; the token's own cap is lower, and wins.
+    const hard = await poke({ kind: "vibe", intensity: 50, repetitions: 1 });
+    expect(hard.status()).toBe(403);
+    expect((await hard.json()).message).toBe("Intensity exceeds this token's cap of 30.");
+
+    const self = await request.post(`${API}/me/stimulus`, {
+      headers: auth(limited.token),
+      data: { stimulus: { kind: "zap", intensity: 10, repetitions: 1 } },
+    });
+    expect(self.status()).toBe(403);
+  });
+
+  const pokeId = crypto.randomUUID();
+  await test.step("the first allowed poke goes through — the refusals spent no slot", async () => {
+    expect((await poke({ kind: "vibe", intensity: 20, repetitions: 1 }, pokeId)).status()).toBe(201);
+  });
+
+  await test.step("the next one inside the interval is a 429 that says how long", async () => {
+    const again = await poke({ kind: "vibe", intensity: 20, repetitions: 1 });
+    expect(again.status()).toBe(429);
+    expect((await again.json()).message).toMatch(/once every 60s\. Try again in \d+s\./);
+  });
+
+  await test.step("but a retry of the poke that landed is still answered", async () => {
+    const retry = await poke({ kind: "vibe", intensity: 20, repetitions: 1 }, pokeId);
+    expect(retry.status()).toBe(200);
+    expect((await retry.json()).id).toBe(pokeId);
+  });
+
+  await test.step("a burst lands exactly once", async () => {
+    const burst = await mint(request, alice, {
+      name: "burst",
+      scopes: ["pokes:send"],
+      minIntervalSeconds: 60,
+    });
+    const statuses = await Promise.all(
+      Array.from({ length: 6 }, () =>
+        request
+          .post(`${API}/pokes`, {
+            headers: auth(burst.token),
+            data: { friendId: bob.user.id, stimulus: { kind: "vibe", intensity: 10, repetitions: 1 } },
+          })
+          .then((r) => r.status()),
+      ),
+    );
+    expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(5);
+  });
+
+  await test.step("the listing says what the token was limited to", async () => {
+    const tokens = await (await request.get(`${API}/me/tokens`, { headers: auth(alice.token) })).json();
+    expect(tokens.find((t: { id: string }) => t.id === limited.id)).toMatchObject({
+      allowedKinds: ["vibe"],
+      maxIntensity: 30,
+      minIntervalSeconds: 60,
+    });
+  });
+});
