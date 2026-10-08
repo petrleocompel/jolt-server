@@ -47,8 +47,11 @@ function Home() {
         </div>
 
         <p className="text-muted-foreground text-sm">
-          API contract: <code className="text-foreground">openapi/jolt-v1.yaml</code> — served
-          under <code className="text-foreground">/api/v1</code>.
+          API contract:{" "}
+          <a href="/openapi.yaml" className="text-foreground underline underline-offset-4">
+            <code>openapi.yaml</code>
+          </a>{" "}
+          — served under <code className="text-foreground">/api/v1</code>.
         </p>
       </div>
     </main>

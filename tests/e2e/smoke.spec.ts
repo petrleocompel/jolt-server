@@ -11,6 +11,17 @@ test("landing page renders", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Jolt Server" })).toBeVisible();
 });
 
+test("the landing page links to the served OpenAPI contract", async ({ page, request }) => {
+  await page.goto("/");
+  const href = await page.getByRole("link", { name: "openapi.yaml" }).getAttribute("href");
+  expect(href).toBe("/openapi.yaml");
+
+  const response = await request.get(href!);
+  expect(response.status()).toBe(200);
+  expect(response.headers()["content-type"]).toContain("application/yaml");
+  expect(await response.text()).toMatch(/^openapi: 3\./);
+});
+
 /**
  * Better Auth trusts only `baseURL` unless told otherwise, so a browser that
  * opened the dev server as `localhost` while BETTER_AUTH_URL says `127.0.0.1`
