@@ -1,5 +1,5 @@
 {
-  "id": "90bfb6b5-8bbc-4587-98e5-142343563c44",
+  "id": "9ecd2bfb-1da4-4b46-a165-fe5e6f47979e",
   "prevId": "a708ba94-b322-407d-b655-2967a03ee55f",
   "version": "7",
   "dialect": "postgresql",
@@ -940,6 +940,20 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": false
+        },
+        "source": {
+          "name": "source",
+          "type": "poke_source",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'app'"
+        },
+        "api_token_id": {
+          "name": "api_token_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         }
       },
       "indexes": {
@@ -1017,6 +1031,22 @@
           "concurrently": false,
           "method": "btree",
           "with": {}
+        },
+        "poke_event_api_token_idx": {
+          "name": "poke_event_api_token_idx",
+          "columns": [
+            {
+              "expression": "api_token_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"poke_event\".\"api_token_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
         }
       },
       "foreignKeys": {
@@ -1044,6 +1074,19 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "poke_event_api_token_id_api_token_id_fk": {
+          "name": "poke_event_api_token_id_api_token_id_fk",
+          "tableFrom": "poke_event",
+          "tableTo": "api_token",
+          "columnsFrom": [
+            "api_token_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
@@ -1338,6 +1381,14 @@
         "deviceNotConnected",
         "notAllowed",
         "muted"
+      ]
+    },
+    "public.poke_source": {
+      "name": "poke_source",
+      "schema": "public",
+      "values": [
+        "app",
+        "api_token"
       ]
     },
     "public.stimulus_kind": {

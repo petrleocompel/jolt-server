@@ -40,6 +40,14 @@ export const friendRequestStatus = pgEnum("friend_request_status", [
 
 export const devicePlatform = pgEnum("device_platform", ["ios"]);
 
+/**
+ * What sent a poke: the account holder in person (`app` — the iOS app or
+ * the web dashboard, both on a session), or a personal access token. Stored
+ * rather than inferred from `api_token_id`, which is nulled when the token
+ * is revoked — the poke was still automated.
+ */
+export const pokeSource = pgEnum("poke_source", ["app", "api_token"]);
+
 export const userRole = pgEnum("user_role", ["user", "admin"]);
 
 /**
@@ -355,12 +363,22 @@ export const pokeEvent = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     /** First ack wins — subsequent acks are no-ops (spec requires idempotency). */
     ackedAt: timestamp("acked_at", { withTimezone: true }),
+    source: pokeSource("source").notNull().default("app"),
+    /**
+     * The token that sent it, while that token exists. Only ever shown to
+     * the sender — the recipient learns that a poke was automated, not what
+     * their friend named the script.
+     */
+    apiTokenId: uuid("api_token_id").references(() => apiToken.id, { onDelete: "set null" }),
   },
   (t) => [
     index("poke_event_recipient_idx").on(t.recipientId, t.createdAt.desc()),
     index("poke_event_sender_idx").on(t.senderId, t.createdAt.desc()),
     // Serves the per-kind cooldown lookup on send.
     index("poke_event_cooldown_idx").on(t.senderId, t.recipientId, t.kind, t.createdAt.desc()),
+    // Revoking a token nulls its pokes' `api_token_id`; without this that is
+    // a scan of every poke ever sent.
+    index("poke_event_api_token_idx").on(t.apiTokenId).where(sql`${t.apiTokenId} IS NOT NULL`),
     check("poke_event_intensity_range", sql`${t.intensity} >= 0 AND ${t.intensity} <= 100`),
     check("poke_event_repetitions_range", sql`${t.repetitions} >= 1 AND ${t.repetitions} <= 5`),
   ],

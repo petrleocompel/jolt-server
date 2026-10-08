@@ -31,6 +31,12 @@ export interface PokePushPayload {
    * — a client that wants the recipient's own local time formats this.
    */
   sentAt: string;
+  /**
+   * Sent through a personal access token — a friend's script, not the friend
+   * in person. The alert body already says so; this is for clients that
+   * render their own.
+   */
+  viaApiToken: boolean;
 }
 
 /**
@@ -141,6 +147,11 @@ export function formatSendTime(sentAt: string | undefined, timeZone = "UTC"): st
  * while the phone is locked, and "zapped you" alone tells the recipient
  * neither how hard nor — once a few pile up, or the push is delivered late —
  * which one they are looking at.
+ *
+ * A poke sent through a personal access token says so, with "(automation)"
+ * at the end: being shocked by a friend's script is not the same as being
+ * shocked by the friend, and the recipient should not have to open the app
+ * to tell which.
  */
 export function alertTextFor(
   payload: PokePushPayload,
@@ -154,7 +165,9 @@ export function alertTextFor(
   const at = formatSendTime(payload.sentAt, timeZone);
   return {
     title: payload.senderDisplayName || `@${payload.senderHandle}`,
-    body: `${verb[payload.stimulus.kind]} — ${formatStimulus(payload.stimulus)}${at ? ` at ${at}` : ""}`,
+    body:
+      `${verb[payload.stimulus.kind]} — ${formatStimulus(payload.stimulus)}` +
+      `${at ? ` at ${at}` : ""}${payload.viaApiToken ? " (automation)" : ""}`,
   };
 }
 

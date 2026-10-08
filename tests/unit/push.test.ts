@@ -17,6 +17,7 @@ const payload: PokePushPayload = {
   recipientHandle: "bob",
   stimulus: { kind: "zap", intensity: 30, repetitions: 2 },
   sentAt: "2026-09-21T14:32:00.000Z",
+  viaApiToken: false,
 };
 
 const target: PushTarget = { id: "device-1", token: "abc123deadbeef" };
@@ -71,6 +72,13 @@ describe("alertTextFor", () => {
     ).toBe("zapped you — 30% at 14:32 UTC");
   });
 
+  it("says when a poke came from a friend's automation, not the friend", () => {
+    expect(alertTextFor({ ...payload, viaApiToken: true }).body).toBe(
+      "zapped you — 30% x2 at 14:32 UTC (automation)",
+    );
+    expect(alertTextFor(payload).body).not.toContain("automation");
+  });
+
   it("titles with the display name, falling back to @handle", () => {
     expect(alertTextFor(payload).title).toBe("Alice Example");
     expect(alertTextFor({ ...payload, senderDisplayName: "" }).title).toBe("@alice");
@@ -119,6 +127,15 @@ describe("buildPokePayloadBodies", () => {
       expect(parsed.type).toBe("poke");
       expect(parsed.poke).toEqual(payload);
     }
+  });
+
+  it("marks an automated poke in both bodies — always as a boolean key", () => {
+    // Boolean, never absent: a client decodes it as a required Bool.
+    const automated = buildPokePayloadBodies({ ...payload, viaApiToken: true });
+    for (const body of [automated.alertBody, automated.silentBody]) {
+      expect(JSON.parse(body).poke.viaApiToken).toBe(true);
+    }
+    expect(JSON.parse(buildPokePayloadBodies(payload).silentBody).poke.viaApiToken).toBe(false);
   });
 });
 

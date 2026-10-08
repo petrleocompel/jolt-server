@@ -59,6 +59,13 @@ function Activity() {
                   <TableCell>
                     {event.stimulus.kind} · {event.stimulus.intensity}% · x
                     {event.stimulus.repetitions}
+                    {event.viaApiToken && (
+                      // The token's name is only ever sent to the person who
+                      // owns it; a recipient just sees that it was automated.
+                      <Badge variant="outline" className="ml-2">
+                        {event.apiTokenName ? `via ${event.apiTokenName}` : "automation"}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell>
                     <Badge variant={statusVariant(event.status)}>{event.status}</Badge>

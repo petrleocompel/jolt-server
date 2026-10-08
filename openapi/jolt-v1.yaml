@@ -923,7 +923,17 @@ components:
 
     PokeEvent:
       type: object
-      required: [id, direction, friendHandle, friendDisplayName, stimulus, status, createdAt, ackedAt]
+      required:
+        - id
+        - direction
+        - friendHandle
+        - friendDisplayName
+        - stimulus
+        - status
+        - createdAt
+        - ackedAt
+        - viaApiToken
+        - apiTokenName
       properties:
         id: { type: string, format: uuid }
         direction: { type: string, enum: [sent, received] }
@@ -939,6 +949,20 @@ components:
             When the recipient's device reported back, i.e. when `status`
             stopped being `pending`. Null until then — and possibly forever,
             since iOS guarantees no delivery for the silent push.
+        viaApiToken:
+          type: boolean
+          description: >
+            Sent through a personal access token — the sender's automation —
+            rather than by the sender in person. Visible to both sides, and
+            still true after the token is revoked.
+        apiTokenName:
+          type: string
+          nullable: true
+          description: >
+            The name the sender gave that token. Only ever sent to the
+            sender (for a self-stimulus that is also the recipient); always
+            null for the recipient, for a poke sent in person, and once the
+            token has been revoked.
 
     PokePushPayload:
       type: object
@@ -965,7 +989,7 @@ components:
         `poke` keys alongside it. Best effort: it may fire the stimulus
         without the recipient touching anything, but iOS gives no
         delivery-time guarantee and throttles these aggressively.
-      required: [pokeID, senderHandle, senderDisplayName, recipientHandle, stimulus, sentAt]
+      required: [pokeID, senderHandle, senderDisplayName, recipientHandle, stimulus, sentAt, viaApiToken]
       properties:
         pokeID: { type: string, format: uuid }
         senderHandle: { type: string }
@@ -988,6 +1012,14 @@ components:
             a rendered time, but in the *server's* configured zone
             (`PUSH_TIME_ZONE`) — a client that wants the recipient's own local
             time formats this instead.
+        viaApiToken:
+          type: boolean
+          description: >
+            Sent by the sender's automation (a personal access token), not by
+            the sender in person. The alert body already ends in
+            " (automation)" when this is true; the flag is for clients that
+            render their own text or badge. The token's name is never sent to
+            the recipient.
       example:
         aps:
           alert:
@@ -1002,6 +1034,7 @@ components:
           recipientHandle: bob
           stimulus: { kind: zap, intensity: 30, repetitions: 1 }
           sentAt: '2026-09-21T14:32:00Z'
+          viaApiToken: false
 
     Device:
       type: object

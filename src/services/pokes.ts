@@ -1,39 +1,31 @@
 import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "#/db";
-import { friendPermission, pokeEvent, user as userTable } from "#/db/schema";
-import type { PokeEvent as PokeEventRow, User } from "#/db/schema";
+import { apiToken, friendPermission, pokeEvent, user as userTable } from "#/db/schema";
+import type { PokeEvent as PokeEventRow } from "#/db/schema";
 import { ApiError } from "#/api/errors";
+import { presentPokeEvent } from "#/api/present";
 import { pushSender } from "#/push";
 import type { AckableStatus, PokeEvent, StimulusConfig } from "#/api/schemas";
 import { activeTargets, markUnregistered } from "#/services/devices";
 import { areFriends } from "#/services/friends";
 import { reserveTokenFire } from "#/services/api-tokens";
 import {
+  describeToken,
   pokeVisibility,
   tokenReachesFriend,
   tokenStimulusViolation,
 } from "#/services/token-access";
 import type { ApiTokenContext } from "#/services/token-access";
 
-function toApi(
-  row: PokeEventRow,
-  viewerId: string,
-  other: Pick<User, "handle" | "name">,
-): PokeEvent {
-  return {
-    id: row.id,
-    direction: row.senderId === viewerId ? "sent" : "received",
-    friendHandle: other.handle,
-    friendDisplayName: other.name,
-    stimulus: {
-      kind: row.kind,
-      intensity: row.intensity,
-      repetitions: row.repetitions,
-    },
-    status: row.status,
-    createdAt: row.createdAt.toISOString(),
-    ackedAt: row.ackedAt?.toISOString() ?? null,
-  };
+/** The sending token's name, for a viewer allowed to see it — else null. */
+async function tokenNameFor(row: PokeEventRow, viewerId: string): Promise<string | null> {
+  if (!row.apiTokenId || row.senderId !== viewerId) return null;
+  const [found] = await db
+    .select({ name: apiToken.name })
+    .from(apiToken)
+    .where(eq(apiToken.id, row.apiTokenId))
+    .limit(1);
+  return found?.name ?? null;
 }
 
 /**
@@ -57,7 +49,10 @@ async function replayOf(
     .limit(1);
   if (!recipient) throw ApiError.notFound("Not friends with that user.");
   console.log(`[pokes] ${pokeId}: retried — already recorded, not sent again`);
-  return { event: toApi(existing, senderId, recipient), replayed: true };
+  return {
+    event: presentPokeEvent(existing, senderId, recipient, await tokenNameFor(existing, senderId)),
+    replayed: true,
+  };
 }
 
 /**
@@ -168,6 +163,7 @@ export async function sendPoke(
         intensity: stimulus.intensity,
         repetitions: stimulus.repetitions,
         status: "pending",
+        ...(token ? { source: "api_token" as const, apiTokenId: token.id } : {}),
       })
       // Two copies of the same retry racing each other: exactly one inserts,
       // the other finds it below and answers as a replay.
@@ -192,7 +188,8 @@ export async function sendPoke(
   // leaves no trace, and `poke_event` alone can't say which request made it.
   console.log(
     `[pokes] ${row.id}: @${sender.handle} -> @${recipient.handle} ` +
-      `${stimulus.kind} ${stimulus.intensity}% x${stimulus.repetitions}`,
+      `${stimulus.kind} ${stimulus.intensity}% x${stimulus.repetitions}` +
+      (token ? ` via ${describeToken(token)}` : ""),
   );
 
   // Delivery is best-effort and must not fail the request: the event is
@@ -204,9 +201,13 @@ export async function sendPoke(
     recipientHandle: recipient.handle,
     stimulus,
     sentAt: row.createdAt.toISOString(),
+    viaApiToken: token !== null,
   }).catch((error) => console.error("[pokes] delivery failed", row.id, error));
 
-  return { event: toApi(row, senderId, recipient), replayed: false };
+  return {
+    event: presentPokeEvent(row, senderId, recipient, token?.name ?? null),
+    replayed: false,
+  };
 }
 
 /**
@@ -284,6 +285,7 @@ export async function sendSelfStimulus(
         intensity: stimulus.intensity,
         repetitions: stimulus.repetitions,
         status: "pending",
+        ...(token ? { source: "api_token" as const, apiTokenId: token.id } : {}),
       })
       .returning();
 
@@ -294,7 +296,8 @@ export async function sendSelfStimulus(
     // thing to rule out when somebody is poked by their own send.
     console.log(
       `[pokes] ${row.id}: @${me.handle} -> @${me.handle} (self) ` +
-        `${stimulus.kind} ${stimulus.intensity}% x${stimulus.repetitions}`,
+        `${stimulus.kind} ${stimulus.intensity}% x${stimulus.repetitions}` +
+        (token ? ` via ${describeToken(token)}` : ""),
     );
 
     void deliver(row.id, userId, {
@@ -304,9 +307,10 @@ export async function sendSelfStimulus(
       recipientHandle: me.handle,
       stimulus,
       sentAt: row.createdAt.toISOString(),
+      viaApiToken: token !== null,
     }).catch((error) => console.error("[pokes] self delivery failed", row.id, error));
 
-    return toApi(row, userId, me);
+    return presentPokeEvent(row, userId, me, token?.name ?? null);
   } catch (error) {
     if (previous === undefined) lastSelfStimulusAt.delete(userId);
     else lastSelfStimulusAt.set(userId, previous);
@@ -366,7 +370,9 @@ export async function ackPoke(
   const [sender] = await db.select().from(userTable).where(eq(userTable.id, row.senderId)).limit(1);
   if (!sender) throw ApiError.notFound("No poke with that id.");
 
-  return toApi(row, userId, sender);
+  // The recipient never sees the token's name — unless they sent it to
+  // themselves, which a self-stimulus is.
+  return presentPokeEvent(row, userId, sender, await tokenNameFor(row, userId));
 }
 
 /**
@@ -400,8 +406,9 @@ export async function listPokes(
   }
 
   const rows = await db
-    .select()
+    .select({ event: pokeEvent, tokenName: apiToken.name })
     .from(pokeEvent)
+    .leftJoin(apiToken, eq(apiToken.id, pokeEvent.apiTokenId))
     .where(and(...filters))
     .orderBy(desc(pokeEvent.createdAt))
     .limit(options.limit);
@@ -409,15 +416,17 @@ export async function listPokes(
   if (rows.length === 0) return [];
 
   const otherIds = [
-    ...new Set(rows.map((r) => (r.senderId === userId ? r.recipientId : r.senderId))),
+    ...new Set(
+      rows.map(({ event }) => (event.senderId === userId ? event.recipientId : event.senderId)),
+    ),
   ];
   const people = await db.select().from(userTable).where(inArray(userTable.id, otherIds));
   const byId = new Map(people.map((p) => [p.id, p]));
 
   return rows
-    .map((row) => {
-      const other = byId.get(row.senderId === userId ? row.recipientId : row.senderId);
-      return other ? toApi(row, userId, other) : null;
+    .map(({ event, tokenName }) => {
+      const other = byId.get(event.senderId === userId ? event.recipientId : event.senderId);
+      return other ? presentPokeEvent(event, userId, other, tokenName) : null;
     })
     .filter((e): e is PokeEvent => e !== null);
 }

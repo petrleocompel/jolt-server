@@ -44,7 +44,14 @@ function AdminPokes() {
                   <TableCell className="text-muted-foreground whitespace-nowrap">
                     {new Date(poke.createdAt).toLocaleString()}
                   </TableCell>
-                  <TableCell>@{poke.senderHandle}</TableCell>
+                  <TableCell>
+                    @{poke.senderHandle}
+                    {poke.source === "api_token" && (
+                      <Badge variant="outline" className="ml-2">
+                        API token
+                      </Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     {poke.kind} · {poke.intensity}% · x{poke.repetitions}
                   </TableCell>

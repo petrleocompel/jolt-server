@@ -69,6 +69,7 @@ export const fetchAllPokes = createServerFn({ method: "GET" }).handler(async () 
       ackedAt: pokeEvent.ackedAt,
       senderHandle: sender.handle,
       recipientId: pokeEvent.recipientId,
+      source: pokeEvent.source,
     })
     .from(pokeEvent)
     .innerJoin(sender, eq(sender.id, pokeEvent.senderId))

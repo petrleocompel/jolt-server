@@ -89,6 +89,13 @@ export const PokeEvent = z.object({
   createdAt: z.iso.datetime(),
   /** When the recipient's device reported back. Null while `pending`. */
   ackedAt: z.iso.datetime().nullable(),
+  /** Sent through a personal access token rather than by the person. */
+  viaApiToken: z.boolean(),
+  /**
+   * Which token, by the name its owner gave it — for the sender only, and
+   * only while the token exists. Always null for the recipient.
+   */
+  apiTokenName: z.string().nullable(),
 });
 
 export const PokePushPayload = z.object({
@@ -107,6 +114,8 @@ export const PokePushPayload = z.object({
   stimulus: StimulusConfig,
   /** Server-side accept time. The alert body renders it; clients may re-render it locally. */
   sentAt: z.iso.datetime(),
+  /** Sent by a friend's automation, not by the friend in person. */
+  viaApiToken: z.boolean(),
 });
 
 /**

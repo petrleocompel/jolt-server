@@ -123,6 +123,7 @@ test("full poke lifecycle", async ({ request }) => {
     expect(poke.status).toBe("pending");
     expect(poke.direction).toBe("sent");
     expect(poke.ackedAt).toBeNull();
+    expect(poke).toMatchObject({ viaApiToken: false, apiTokenName: null });
     pokeId = poke.id;
   });
 
@@ -326,6 +327,8 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
       status: "pending",
       friendHandle: erin.user.handle,
       stimulus: { kind: "zap", intensity: 15, repetitions: 2 },
+      viaApiToken: true,
+      apiTokenName: "home assistant",
     });
 
     // Same ack endpoint as any other poke — it is a poke_event from you to you.
@@ -442,6 +445,16 @@ test("a scoped token pokes only the friends it was minted for", async ({ request
       data: { friendId: bob.user.id, stimulus: vibe },
     });
     expect(toBob.status()).toBe(201);
+    const sent = await toBob.json();
+    expect(sent).toMatchObject({ viaApiToken: true, apiTokenName: "bob only" });
+
+    // Bob learns it was automated — not what alice named the script.
+    const bobsFeed = await (await request.get(`${API}/pokes`, { headers: auth(bob.token) })).json();
+    expect(bobsFeed.find((e: { id: string }) => e.id === sent.id)).toMatchObject({
+      direction: "received",
+      viaApiToken: true,
+      apiTokenName: null,
+    });
 
     const toCarol = await request.post(`${API}/pokes`, {
       headers: auth(forBob.token),
@@ -519,6 +532,22 @@ test("a scoped token pokes only the friends it was minted for", async ({ request
       data: { name: "nope", scopes: ["pokes:send"], friendIds: [stranger.user.id] },
     });
     expect(response.status()).toBe(400);
+  });
+
+  await test.step("revoking a token keeps its pokes marked, but drops the name", async () => {
+    const shortLived = await mint(request, alice, { name: "short-lived", scopes: ["pokes:send"] });
+    const sent = await (
+      await request.post(`${API}/pokes`, {
+        headers: auth(shortLived.token),
+        data: { friendId: carol.user.id, stimulus: vibe },
+      })
+    ).json();
+    await request.delete(`${API}/me/tokens/${shortLived.id}`, { headers: auth(alice.token) });
+    const feed = await (await request.get(`${API}/pokes`, { headers: auth(alice.token) })).json();
+    expect(feed.find((e: { id: string }) => e.id === sent.id)).toMatchObject({
+      viaApiToken: true,
+      apiTokenName: null,
+    });
   });
 
   await test.step("unfriending empties the list for good", async () => {
