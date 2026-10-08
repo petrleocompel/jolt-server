@@ -1,0 +1,129 @@
+---
+title: Quick start
+description: Run Jolt Server from the published image with one compose file, create the first admin and point the app at it.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+This gets you from a bare Linux machine to a server the Jolt app can sign in
+to. It uses the `compose.yaml` at the root of the repository, which runs the
+published image `ghcr.io/petrleocompel/jolt-server` and needs no checkout of
+the source.
+
+Nothing here talks to anyone else's infrastructure. Your instance holds your
+accounts, your friend graph and your poke history.
+
+Before you start, check the [requirements](/jolt-server/self-hosting/requirements/):
+Docker with the Compose plugin, a domain pointing at the machine, and ports 80
+and 443 reachable from the internet.
+
+<Steps>
+
+1. **Download the compose file and the example configuration**
+
+   ```bash
+   mkdir jolt && cd jolt
+   curl -fsSLO https://raw.githubusercontent.com/petrleocompel/jolt-server/main/compose.yaml
+   curl -fsSL -o .env https://raw.githubusercontent.com/petrleocompel/jolt-server/main/.env.example
+   ```
+
+   Compose reads `.env` from the same directory as `compose.yaml`, so keep the
+   two together.
+
+2. **Edit `.env`**
+
+   Three values matter for a first start:
+
+   | Variable             | What to put there                                                                                   |
+   | -------------------- | --------------------------------------------------------------------------------------------------- |
+   | `APP_HOST`           | Your domain, for example `jolt.example.com`. No scheme.                                             |
+   | `BETTER_AUTH_SECRET` | Generate with `openssl rand -base64 48`. It must be at least 32 characters. Rotating it logs everyone out. |
+   | `POSTGRES_PASSWORD`  | Anything long. The database is only reachable inside the compose network.                           |
+
+   Leave the `APNS_*` values blank for now. Without them the server logs the
+   pushes it would have sent, and everything else works. See
+   [Push notifications](/jolt-server/self-hosting/push-notifications/) when you
+   want pokes to reach a backgrounded phone.
+
+   `.env.example` also contains values that only matter for development, such
+   as `DATABASE_URL` and `NODE_ENV`. `compose.yaml` ignores them: the containers
+   build their database URL from the `POSTGRES_*` values. The
+   [configuration reference](/jolt-server/self-hosting/configuration/) lists
+   every variable.
+
+   To pin a release instead of following `latest`, set `JOLT_VERSION` to an
+   image tag. It defaults to `latest`.
+
+3. **Start it**
+
+   ```bash
+   docker compose up -d
+   ```
+
+   This starts, in order:
+
+   - `db`: Postgres 16, with its data in the `pgdata` volume.
+   - `migrate`: runs the database migrations to completion, then exits. If it
+     fails, nothing else starts.
+   - `app`: the web UI and API on port 3000 inside the network, once `migrate`
+     has succeeded.
+   - `cron`: the retention and cleanup jobs, once an hour.
+   - `caddy`: listens on ports 80 and 443 and gets a Let's Encrypt certificate
+     for `APP_HOST`. It waits until `app` reports healthy.
+
+4. **Check it**
+
+   ```bash
+   curl https://APP_HOST/healthz
+   ```
+
+   A healthy server answers `{"status":"ok","db":"up"}`. If the database is
+   unreachable it answers `503` with `{"status":"degraded","db":"down"}`.
+
+5. **Create the first admin**
+
+   ```bash
+   docker compose exec -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='at-least-12-chars' app pnpm db:seed-admin
+   ```
+
+   The seed script reads only its own process environment. The `app`
+   container does not see the `ADMIN_*` values in `.env`, so pass them with
+   `-e` as shown. The password must be at least 12 characters. You can also
+   pass `-e ADMIN_NAME=…` and `-e ADMIN_HANDLE=…`; they default to `Admin` and
+   `admin`.
+
+   The script is safe to run again. If an account with that email already
+   exists, it promotes it to admin instead of creating a new one. That means
+   you can also sign up first, in the app or at `https://APP_HOST/signup`, and
+   then run the command with your own email.
+
+   Admins get the admin dashboard at `https://APP_HOST/admin`.
+
+6. **Point the app at your server**
+
+   In Jolt, open **Settings → Server → Server URL** and enter your base URL
+   including the API path:
+
+   ```text
+   https://APP_HOST/api/v1
+   ```
+
+   Tap **Test connection**. On success the app switches to your server and
+   signs you out of the one it used before. Accounts do not move between
+   servers.
+
+</Steps>
+
+<Aside>
+The Jolt iOS app is in private testing on TestFlight and is not publicly
+available yet.
+</Aside>
+
+## Next steps
+
+- Already running nginx, Traefik or Caddy? Use
+  [an existing reverse proxy](/jolt-server/self-hosting/reverse-proxy/#use-an-existing-reverse-proxy)
+  instead of the built-in Caddy.
+- Turn on [push notifications](/jolt-server/self-hosting/push-notifications/).
+- Decide the [automated pokes policy](/jolt-server/self-hosting/automated-pokes/).
+- Set up [backups](/jolt-server/self-hosting/backup-restore/).

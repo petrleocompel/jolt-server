@@ -1,0 +1,102 @@
+---
+title: Jolt Server
+description: Self-hostable backend for the Jolt iOS app. Friends poke each other's Pavlok wearables, with per-stimulus permissions.
+template: splash
+editUrl: false
+hero:
+  title: Jolt Server
+  tagline: The self-hostable backend for the Jolt iOS app. Friends poke each other's Pavlok wearables, and every stimulus has its own permission.
+  image:
+    file: ../../assets/screenshot-dashboard.png
+    alt: The Jolt Server web dashboard
+  actions:
+    - text: Quick start
+      link: /jolt-server/getting-started/quick-start/
+      icon: right-arrow
+    - text: Read the docs
+      link: /jolt-server/self-hosting/requirements/
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/petrleocompel/jolt-server
+      icon: github
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+Jolt Server handles accounts, friends, per-stimulus permissions and pokes for
+Jolt, an independent iOS client for Pavlok wearables. Jolt is not affiliated
+with Pavlok. The iOS app is in private testing on TestFlight and is not
+publicly available yet.
+
+## What it does
+
+<CardGrid>
+	<Card title="Per-stimulus permissions and cooldowns" icon="padlock">
+		Zap, vibe and beep each have their own allow flag, intensity cap and
+		cooldown, set by the person receiving them and re-checked by the server on
+		every poke.
+	</Card>
+	<Card title="APNs alert and silent push" icon="phone">
+		Every poke sends an alert push so the recipient finds out, plus a silent
+		push that can fire the stimulus without anyone touching the phone.
+	</Card>
+	<Card title="Personal access tokens" icon="setting">
+		Scripts and home automations can act for you with `jolt_pat_` tokens limited
+		by scope, by friend, by stimulus kind, by intensity and by firing interval.
+	</Card>
+	<Card title="No discovery, by design" icon="magnifier">
+		There is no user search. A friend request always names someone specific,
+		by exact `@handle` or by an invite code they shared with you.
+	</Card>
+	<Card title="Admin dashboard" icon="analytics">
+		Users, devices, all pokes with a delivery-status breakdown, and server
+		settings, plus a clear warning when APNs is not configured.
+	</Card>
+	<Card title="Self-host in one command" icon="rocket">
+		One `compose.yaml` runs Postgres, migrations, the API, the hourly cleanup
+		jobs and Caddy with a Let's Encrypt certificate.
+	</Card>
+</CardGrid>
+
+## Self-host in one command
+
+You need a Linux machine with Docker and the Compose plugin, and a domain that
+points at it with ports 80 and 443 open.
+
+```bash
+mkdir jolt && cd jolt
+curl -fsSLO https://raw.githubusercontent.com/petrleocompel/jolt-server/main/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/petrleocompel/jolt-server/main/.env.example
+# edit .env: APP_HOST, BETTER_AUTH_SECRET, POSTGRES_PASSWORD
+docker compose up -d
+```
+
+The [quick start](/jolt-server/getting-started/quick-start/) walks through
+each step, including creating the first admin and pointing the app at your
+server.
+
+## Links
+
+<CardGrid>
+	<LinkCard
+		title="Source code"
+		description="petrleocompel/jolt-server on GitHub"
+		href="https://github.com/petrleocompel/jolt-server"
+	/>
+	<LinkCard
+		title="Releases"
+		description="Release notes and versions"
+		href="https://github.com/petrleocompel/jolt-server/releases"
+	/>
+	<LinkCard
+		title="Documentation"
+		description="Self-hosting, guides and API reference"
+		href="/jolt-server/self-hosting/requirements/"
+	/>
+	<LinkCard
+		title="License"
+		description="AGPL-3.0-only"
+		href="https://github.com/petrleocompel/jolt-server/blob/main/LICENSE"
+	/>
+</CardGrid>

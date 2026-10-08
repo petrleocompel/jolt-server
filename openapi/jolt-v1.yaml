@@ -3,12 +3,10 @@ info:
   title: Jolt Social API
   version: 0.1.0
   description: >
-    Backend for Jolt's friends/pokes feature (see docs/RE-FINDINGS.md and the
-    mobile app's `Domain/Repositories/{Auth,Friends,Poke}Repository.swift`).
-    This spec is the contract the mobile client's `MockSocialBackend` already
-    implements in-memory — the real server should be a drop-in replacement,
-    no client-side changes needed beyond swapping the repository
-    implementation.
+    The API the Jolt iOS app uses for accounts, friends and pokes. The app's
+    in-memory `MockSocialBackend` implements this same contract, so the server
+    is a drop-in replacement for it: no client changes beyond swapping the
+    repository implementation and setting a base URL.
 
     Scope, per product decision: no discovery. A friend request always
     targets someone specific, either by their exact `@handle` or by an

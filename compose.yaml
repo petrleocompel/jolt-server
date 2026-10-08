@@ -1,0 +1,124 @@
+# Self-hosting Jolt Server from the published image. Needs only this file and
+# a .env next to it (start from .env.example):
+#
+#   docker compose up -d
+#
+# Caddy terminates TLS and fetches a Let's Encrypt certificate for APP_HOST,
+# so ports 80 and 443 must reach this machine. Already running a reverse
+# proxy? See https://petrleocompel.github.io/jolt-server/self-hosting/reverse-proxy/
+#
+# Building from source instead: deploy/docker-compose.yml.
+
+x-image: &image ghcr.io/petrleocompel/jolt-server:${JOLT_VERSION:-latest}
+
+# The containers get their database URL from the POSTGRES_* values only, so a
+# DATABASE_URL in .env meant for `pnpm dev` on the host cannot leak in here.
+x-database-url: &database-url postgres://${POSTGRES_USER:-jolt}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-jolt}
+x-public-url: &public-url ${PUBLIC_URL:-https://${APP_HOST:?set APP_HOST to your domain}}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jolt}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-jolt}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-jolt}"]
+      interval: 5s
+      retries: 5
+
+  # Runs the database migrations to completion, then exits. `app` and `cron`
+  # wait for it, so an upgrade never serves against an old schema.
+  migrate:
+    image: *image
+    restart: "no"
+    command: ["pnpm", "db:migrate"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: *database-url
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    image: *image
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: *database-url
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET (openssl rand -base64 48)}
+      BETTER_AUTH_URL: *public-url
+      TRUSTED_ORIGINS: ${TRUSTED_ORIGINS:-}
+      APNS_KEY_ID: ${APNS_KEY_ID:-}
+      APNS_TEAM_ID: ${APNS_TEAM_ID:-}
+      APNS_BUNDLE_ID: ${APNS_BUNDLE_ID:-cz.peelco.jolt}
+      APNS_KEY_P8: ${APNS_KEY_P8:-}
+      APNS_ENV: ${APNS_ENV:-production}
+      PUSH_TIME_ZONE: ${PUSH_TIME_ZONE:-UTC}
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      AUTOMATION_CONSENT_REQUIRED: ${AUTOMATION_CONSENT_REQUIRED:-}
+      POKE_EVENT_RETENTION_DAYS: ${POKE_EVENT_RETENTION_DAYS:-90}
+      FRIEND_REQUEST_EXPIRY_DAYS: ${FRIEND_REQUEST_EXPIRY_DAYS:-30}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # Same image, different entrypoint: the hourly retention and cleanup jobs.
+  cron:
+    image: *image
+    restart: unless-stopped
+    entrypoint: ["sh", "-c", "while true; do pnpm cron; sleep 3600; done"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: *database-url
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:?set BETTER_AUTH_SECRET (openssl rand -base64 48)}
+      BETTER_AUTH_URL: *public-url
+      POKE_EVENT_RETENTION_DAYS: ${POKE_EVENT_RETENTION_DAYS:-90}
+      FRIEND_REQUEST_EXPIRY_DAYS: ${FRIEND_REQUEST_EXPIRY_DAYS:-30}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    configs:
+      - source: caddyfile
+        target: /etc/caddy/Caddyfile
+    volumes:
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      app:
+        condition: service_healthy
+
+configs:
+  caddyfile:
+    content: |
+      ${APP_HOST:?set APP_HOST to your domain} {
+        encode zstd gzip
+        reverse_proxy app:3000
+      }
+
+volumes:
+  pgdata:
+  caddydata:
+  caddyconfig:

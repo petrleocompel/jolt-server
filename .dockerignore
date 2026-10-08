@@ -1,0 +1,20 @@
+# Keep the build context to what the Dockerfile needs.
+.git
+node_modules
+.pnpm-store
+.output
+.nitro
+.tanstack
+.vinxi
+dist
+coverage
+playwright-report
+test-results
+docs
+.github
+.env
+.env.*
+!.env.example
+*.p8
+*.log
+.DS_Store

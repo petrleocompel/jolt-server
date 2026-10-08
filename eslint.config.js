@@ -27,6 +27,8 @@ export default [
       'src/routeTree.gen.ts',
       // shadcn components are vendored upstream code; we don't reformat them.
       'src/components/ui/**',
+      // The docs site is a separate Astro project.
+      'docs/**',
     ],
   },
 ]

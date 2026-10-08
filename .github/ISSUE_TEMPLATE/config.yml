@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/petrleocompel/jolt-server/security/advisories/new
+    about: Please report security issues privately, not as an issue.
+  - name: Self-hosting docs
+    url: https://petrleocompel.github.io/jolt-server/
+    about: Setup, configuration and troubleshooting.

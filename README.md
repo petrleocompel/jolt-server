@@ -1,270 +1,151 @@
 # Jolt Server
 
-Backend for [Jolt](https://petrleocompel.github.io/jolt-server/), the independent iOS
-client for Pavlok wearables. Handles accounts, friends, per-stimulus
-permissions, and pokes delivered over APNs.
+**The self-hostable backend for Jolt: friends poking each other's Pavlok
+wearables, with permissions each person controls.**
 
-TanStack Start (SSR web UI + API routes), Drizzle/Postgres, Better Auth.
+[![CI](https://github.com/petrleocompel/jolt-server/actions/workflows/ci.yml/badge.svg)](https://github.com/petrleocompel/jolt-server/actions/workflows/ci.yml)
+[![License: AGPL-3.0-only](https://img.shields.io/badge/license-AGPL--3.0--only-00E676)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-petrleocompel.github.io%2Fjolt--server-00E676)](https://petrleocompel.github.io/jolt-server/)
 
-**Running your own?** See [docs/SELFHOSTING.md](docs/SELFHOSTING.md). The iOS
-app takes a server URL in Settings, so it can point at your instance instead of
-ours.
+![The Jolt Server dashboard: friends, requests and recent pokes](.github/screenshots/dashboard.png)
 
-## The contract comes first
+Jolt is an independent iOS client for Pavlok wearables. This server holds
+the accounts, the friend graph and the poke history, and delivers each poke to
+the recipient's phone over APNs. Anyone can run their own instance: the app
+takes a server URL in its settings. The iOS app is in private testing
+(TestFlight) for now.
 
-`openapi/jolt-v1.yaml` is canonical. The mobile client's `MockSocialBackend`
-implements the same contract in-memory, so this server is meant to be a
-drop-in replacement for it — no client changes beyond swapping the repository
-implementation and setting a base URL.
+## Features
 
-`src/api/schemas.ts` is the runtime mirror the server validates against.
-`pnpm openapi:check` compares the two and fails CI when they drift: component
-properties, required fields, enum members, and whether every spec path has a
-route file behind it.
+- **Per-stimulus permissions.** Each friend gets separate allow flags,
+  intensity caps and cooldowns for zap, vibe and beep, set by the person
+  receiving them and enforced by the server on every poke.
+- **Reliable delivery over APNs.** Every poke is sent as an alert plus a silent
+  push, and the device acknowledges the outcome (`fired`, `muted`,
+  `deviceNotConnected`, …). Without Apple credentials the server logs pushes
+  instead of sending them, and everything else keeps working.
+- **Personal access tokens.** Your own scripts can jolt you or poke friends.
+  Each token has its own scopes, friend list, intensity and rate limits, and
+  each recipient decides whether a friend's automations may reach them.
+- **No discovery, by design.** You can't search for users. Friend requests
+  need an exact `@handle` or an invite code shared out of band.
+- **Web dashboard.** Friends, requests, permissions, activity, devices with a
+  push delivery test, and API tokens, plus an admin area for users, pokes and
+  server settings.
+- **Contract first.** [`openapi/jolt-v1.yaml`](openapi/jolt-v1.yaml) is the
+  canonical API, CI fails when the server's schemas drift from it, and every
+  instance serves it at `/openapi.yaml`.
 
-**Base path is `/api/v1`**, not the `/v1` the spec originally declared — the
-`servers:` entry was updated to match. Better Auth keeps its own surface at
-`/api/auth/*`; the mobile client never touches it, because `/api/v1/auth/*`
-adapts it to the `{ token, user }` shape the contract specifies.
+## Self-host in one command
 
-## Setup
+You need Docker with the Compose plugin and a domain pointing at the machine,
+with ports 80 and 443 open. Caddy fetches the TLS certificate.
 
 ```bash
-cp .env.example .env          # then fill BETTER_AUTH_SECRET at minimum
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d db
+mkdir jolt && cd jolt
+curl -fsSLO https://raw.githubusercontent.com/petrleocompel/jolt-server/main/compose.yaml
+curl -fsSL -o .env https://raw.githubusercontent.com/petrleocompel/jolt-server/main/.env.example
+```
+
+Set these three in `.env`:
+
+| Variable | Value |
+| --- | --- |
+| `APP_HOST` | Your domain, e.g. `jolt.example.com` (no scheme) |
+| `BETTER_AUTH_SECRET` | `openssl rand -base64 48`. Changing it later logs everyone out. |
+| `POSTGRES_PASSWORD` | Any long random string |
+
+```bash
+docker compose up -d
+curl https://jolt.example.com/healthz
+```
+
+Create the first admin account:
+
+```bash
+docker compose exec -e ADMIN_EMAIL=you@example.com -e ADMIN_PASSWORD='at-least-12-chars' app pnpm db:seed-admin
+```
+
+Then in the app open **Settings → Server → Server URL**, enter
+`https://jolt.example.com/api/v1` and tap **Test connection**.
+
+The [self-hosting docs](https://petrleocompel.github.io/jolt-server/) cover
+every configuration variable, running behind an existing reverse proxy, push
+notifications, upgrades and backups.
+
+## Configuration
+
+Everything is set through environment variables; [`.env.example`](.env.example)
+lists them all with comments. Beyond the three above, the ones you are most
+likely to touch:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PUBLIC_URL` | `https://$APP_HOST` | Public origin, if TLS ends elsewhere or you serve plain HTTP on a LAN |
+| `TRUSTED_ORIGINS` | none | Other origins browsers may sign in from, comma-separated |
+| `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_P8` | none | APNs token auth. Set all three to send real pushes |
+| `APNS_BUNDLE_ID`, `APNS_ENV` | `cz.peelco.jolt`, `production` | Must match the app build on the phone |
+| `AUTOMATION_CONSENT_REQUIRED` | unset (an admin decides) | Whether friends' tokens need each recipient's consent |
+| `PUSH_TIME_ZONE` | `UTC` | Time zone of the time shown in notification text |
+| `POKE_EVENT_RETENTION_DAYS`, `FRIEND_REQUEST_EXPIRY_DAYS` | `90`, `30` | Retention for the hourly cron jobs |
+| `JOLT_VERSION` | `latest` | Image tag to run, e.g. `0.1.0` or `edge` (tracks `main`) |
+
+## Development
+
+Requires Node 22, pnpm (`corepack enable`) and Docker for Postgres.
+
+```bash
+cp .env.example .env          # set BETTER_AUTH_SECRET at minimum
+docker compose --env-file .env -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d db
 pnpm install
-pnpm db:generate && pnpm db:migrate
-pnpm db:seed-admin            # needs ADMIN_EMAIL + ADMIN_PASSWORD
+pnpm db:migrate
+pnpm db:seed-admin            # needs ADMIN_EMAIL + ADMIN_PASSWORD in the environment
 pnpm dev                      # http://127.0.0.1:3000
 ```
 
-Generate a secret with `openssl rand -base64 48`.
-
-## Scripts
-
 | Command | Purpose |
-|---|---|
+| --- | --- |
 | `pnpm dev` | Dev server on :3000 |
-| `pnpm typecheck` / `pnpm lint` | TS and ESLint |
+| `pnpm lint` / `pnpm typecheck` | ESLint and TypeScript (run `pnpm generate-routes` first) |
 | `pnpm test` | Vitest unit tests |
-| `pnpm test:e2e` | Playwright, incl. the full contract walk |
-| `pnpm e2e:up` / `pnpm e2e:down` | Throwaway Postgres on :5433 for e2e |
-| `pnpm openapi:check` | Fail on spec/Zod drift |
-| `pnpm openapi:generate` | Print the structural signatures |
-| `pnpm db:generate` / `db:migrate` / `db:studio` | Drizzle |
-| `pnpm cron --list` | List retention jobs |
-| `pnpm cron --once <job>` | Run one job |
+| `pnpm e2e:up` / `pnpm test:e2e` / `pnpm e2e:down` | Playwright contract walk against a throwaway Postgres on :5433 |
+| `pnpm openapi:check` | Fail when the spec and `src/api/schemas.ts` disagree |
+| `pnpm db:generate` / `db:migrate` / `db:studio` | Drizzle migrations and studio |
+| `pnpm cron --list` / `pnpm cron --once <job>` | List or run the retention jobs |
 
-## Push notifications
+To build the image from source instead of pulling it, use
+`deploy/docker-compose.yml` with its overlays (see the comments at the top
+of that file).
 
-`POST /api/v1/pokes` sends **two separate** APNs pushes per poke:
+### Project layout
 
-1. an alert push (`apns-push-type: alert`, priority 10) so the recipient
-   definitely finds out;
-2. a silent push (`apns-push-type: background`, priority 5) that can fire the
-   stimulus without interaction — best effort, iOS gives no delivery guarantee.
-
-They cannot be merged: iOS suppresses the background wake when an `alert` is
-present in the same payload.
-
-The alert reads `Alice` / `zapped you — 30% x2 at 14:32 UTC`: how hard and
-when, because a poke arrives on a locked phone and "zapped you" alone does not
-say which of the last three it is. The time is rendered server-side in
-`PUSH_TIME_ZONE` (default `UTC`) and always names its zone — a client that
-wants the recipient's own local time has the raw `sentAt` in the payload and
-should prefer it.
-
-Without `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_KEY_P8`, the server falls back
-to `ConsolePushSender`, which logs what it would have sent. Everything else —
-permission checks, cooldowns, event rows, acks — works unchanged, so the whole
-flow is testable with no Apple credentials. The admin dashboard says loudly
-when APNs is unconfigured.
-
-Tokens that come back `410 Unregistered` are marked disabled immediately and
-deleted by the `cull-dead-tokens` cron job.
-
-### Testing delivery
-
-`POST /api/v1/devices/test-push` sends the same alert + silent pair to your
-own devices, with a `type: "test"` payload instead of a poke — no friendship,
-no permission, no `poke_event`. Send `stimulus` to have the phone fire it too,
-or omit it for a notification-only test that needs no wearable connected.
-
-Users run it from **Dashboard → Devices**; the app has the same button under
-Settings → Notifications. Admins can push to *someone else's* devices from
-`/admin/devices` (same service, not scoped to the caller).
-
-The device confirms receipt with `POST /devices/test-push/{testID}/ack`, and
-`GET /devices/test-push/{testID}` reports the round trip, so "delivered in
-1.2 s" means the phone genuinely got it — not just that Apple accepted it.
-
-Tests are held **in memory for 10 minutes**, not in the database: a test is
-only interesting while you are watching it. That assumes a single `app`
-container (which `deploy/docker-compose.yml` runs); behind two replicas an ack
-would land on the instance that didn't send, and every test would look
-undelivered. Rate limited to one per 5 s per account.
-
-## Poke lifecycle
-
-A poke is created `pending` and only the recipient's device moves it to a
-terminal state via `POST /pokes/{id}/ack` (`fired`, `deviceNotConnected`,
-`notAllowed`, `muted`). Acking is idempotent — first ack wins — because the
-same poke may be acked twice, once from the silent push and once from a
-notification tap.
-
-`pending` was **added to `PokeDeliveryStatus`** during implementation: the
-original enum had only terminal values, leaving nothing honest to record
-between accepting a poke and hearing back from the device. Clients should
-treat a long-`pending` poke as undelivered.
-
-## Your own integrations
-
-A **personal access token** (`jolt_pat_…`) lets your own code act for you —
-jolt you when a build fails, or poke a friend from a home automation. Mint one
-under **Dashboard → API tokens** (or at `POST /api/v1/me/tokens`, with a
-session) and paste it into whatever you are wiring up. A token is never
-editable: to change what it may do, mint another and revoke the old one.
-
-Only the sha256 of a token is stored, so the secret is returned exactly once,
-at creation, and a lost one is replaced rather than looked up. The dashboard
-page shows the secret once, with ready-made curl lines for what it may do, and
-lists every token with its scopes, friends, limits and when it was last used,
-so a forgotten integration is visible rather than merely remembered.
-
-### Scopes
-
-Each token says what it may do. `scopes` is required when minting:
-
-| Scope | Unlocks |
-|---|---|
-| `stimulus:self` | `POST /me/stimulus` — fire at your own devices |
-| `pokes:send` | `POST /pokes` — poke friends, within what each allows you |
-| `friends:read` | `GET /friends` |
-| `pokes:read` | `GET /pokes` |
-| `*` | every scope, including any added later |
-
-`GET /me` works with any valid token. A token missing the scope an endpoint
-needs gets `403 This token lacks the "pokes:send" scope.` Everything else —
-minting, listing and revoking tokens, devices, friend requests, editing
-permissions, acks — is session-only, whatever the scopes; a token there is a
-**403, not a 401**, so an integrator is told the token is fine and the
-endpoint is not. A token that could mint another would survive its own
-revocation. Tokens minted before scopes existed were migrated to
-`stimulus:self`, which is all they could ever do.
-
-### Which friends
-
-By default a token reaches every friend, including ones added later. Send
-`friendIds` when minting and it reaches only those (`friendScope:
-"selected"`). Each must be a current friend. Unfriending someone removes them
-from every token on both sides — and re-friending does not put them back — so
-a `selected` token whose list has emptied reaches **nobody**, never
-everybody. Such a token sees only its friends in `GET /friends`, and only
-pokes with them in `GET /pokes`. A token's `GET /pokes` includes your own
-self-stimuli only if it may fire them (`stimulus:self` or `*`).
-
-```bash
-curl -X POST https://jolt.example/api/v1/pokes \
-  -H "Authorization: Bearer jolt_pat_…" \
-  -H "Content-Type: application/json" \
-  -d '{"friendId":"<their id from GET /friends>","stimulus":{"kind":"vibe","intensity":20,"repetitions":1}}'
+```text
+openapi/jolt-v1.yaml   canonical API contract
+src/routes/            TanStack Start pages and API routes (/api/v1/*)
+src/api/               request schemas (Zod), auth bridge, response shaping
+src/services/          friends and permissions, pokes, devices, API tokens, settings
+src/push/              APNs sender and the console fallback
+src/db/                Drizzle schema; migrations live in drizzle/
+src/cron/              retention and cleanup jobs
+deploy/                compose files for development, e2e and building from source
+docs/                  documentation site (Astro Starlight)
 ```
 
-### Limits
+Stack: TanStack Start (React SSR and API routes) on Nitro, Drizzle ORM with
+Postgres, Better Auth.
 
-A token can also be minted with limits on what it fires, at you or at a
-friend: `allowedKinds` (default every kind), `maxIntensity` (default: only the
-recipient's cap) and `minIntervalSeconds` (default 1, at least 1, at most a
-day). They narrow the recipient's grant, never widen it — the lower cap wins,
-and both the token's interval and the friend's cooldown must have passed. The
-interval is claimed with one conditional `UPDATE` on `api_token.last_fired_at`
-as the last check before the poke is recorded, so it holds across instances
-and restarts, a burst lands exactly once (`429`, with how long to wait), and a
-poke refused for any other reason costs no slot. A retried `pokeId` is still
-answered before any of it.
+## Contributing
 
-### What the other side sees
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md):
+first-time contributors sign the [CLA](CLA.md) once, by commenting on their PR.
+The iOS app is built by the maintainer's private CI; server contributions go
+through GitHub pull requests. Please report security issues privately, as
+described in [SECURITY.md](SECURITY.md).
 
-A poke sent with a token is recorded as such (`poke_event.source =
-'api_token'`). Both ends see `viaApiToken: true` in `PokeEvent`; the sender
-also sees `apiTokenName`, the recipient never does. The push carries
-`viaApiToken` too, and its alert ends in `(automation)`. Server logs name the
-token by id prefix and name.
+## License
 
-### Self-stimulus
+[AGPL-3.0-only](LICENSE). You can self-host, modify and share it; if you run a
+modified version as a network service, you have to offer its source to your
+users. The license covers the code, not the Jolt name or logo.
 
-`POST /api/v1/me/stimulus` fires a stimulus at your own devices. No friend and
-no permission grant, because the only person in the request is the one holding
-the credential:
-
-```bash
-curl -X POST https://jolt.example/api/v1/me/stimulus \
-  -H "Authorization: Bearer jolt_pat_…" \
-  -H "Content-Type: application/json" \
-  -d '{"stimulus":{"kind":"vibe","intensity":20,"repetitions":1}}'
-```
-
-The body is **strict**: an unknown field is a 400. It differs from
-`POST /pokes` by one field, and a caller that means to poke a friend but posts
-`{ friendId, stimulus }` here would otherwise have `friendId` stripped and be
-told 201 — for a stimulus fired at itself.
-
-The stimulus is recorded as a `poke_event` from you to you, so it appears in
-your activity feed and acks through `POST /pokes/{id}/ack` like any other poke,
-and it is delivered as an ordinary poke push — which is what lets existing
-clients fire it with no changes. Rate limited to one per second. With no
-registered device it is a 404 rather than a silent success, because an
-integration told "201" for a stimulus nobody could receive has been told the
-opposite of what happened.
-
-## Permissions
-
-Per stimulus (`zap`/`vibe`/`beep`), each with its own allow flag, intensity
-cap and cooldown, always edited from the **granter's** side. Accepting a
-friend request seeds all six rows (3 stimuli x 2 directions) disabled.
-
-The composer clamps intensity client-side for UX only. The server re-checks
-permission, cap and cooldown on every send and is authoritative.
-
-### Automated pokes
-
-Allowing a friend a stimulus does not by itself allow their *scripts*. Each
-grant also has `automationAllowed`: `true`, `false`, or `null` for "no answer
-yet", which follows the server policy — allowed, unless the operator requires
-consent (`Me.policies.automationConsentRequired`). An explicit answer always
-wins and is never rewritten by a policy change. Only pokes sent with a token
-are subject to it; a refused one is `403 They haven't allowed automated pokes
-of that stimulus.`
-
-It is set through the same `PUT /friends/{id}/permissions/{kind}`, with one
-difference from the other three keys: an **absent** `automationAllowed`
-leaves the stored answer unchanged — apps built before it send only the three
-as a full overwrite and must not wipe it — while `null` resets it to the
-default. Responses carry both `automationAllowed` and
-`automationAllowedEffective`. The web dashboard has a Default/Allow/Block
-control per friend and stimulus.
-
-The policy is the `AUTOMATION_CONSENT_REQUIRED` environment variable when set
-(then shown locked), otherwise an admin's choice at **/admin/settings**,
-otherwise "not required". Before requiring consent, that page says how many
-allowed-but-unanswered grants will start refusing automated pokes.
-
-## No discovery, by design
-
-There is no user search endpoint. A friend request always targets someone
-specific, by exact `@handle` or by an invite code shared out-of-band. The
-public `/invite/$code` page deliberately does not confirm whether a code is
-real before sign-in — doing so would recreate the discovery endpoint the
-product decision rules out.
-
-## Deploy
-
-```bash
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.selfhost.yml up -d
-```
-
-Requires `POSTGRES_PASSWORD`, `BETTER_AUTH_SECRET`, `APP_HOST`, and the
-`APNS_*` values in the environment. Caddy terminates TLS; the `cron` service
-runs the retention jobs hourly off the same image.
-
-Never commit `.env` or the `.p8` auth key — `*.p8` is gitignored.
+Jolt is not affiliated with or endorsed by Pavlok.

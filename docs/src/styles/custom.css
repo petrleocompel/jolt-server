@@ -1,0 +1,53 @@
+/*
+ * Jolt brand on Starlight: electric green (#00E676, jolt-400) on near-black
+ * "ink" surfaces. Palettes mirror the @theme block in the server's
+ * src/styles.css.
+ */
+
+/* Dark theme (default). */
+:root {
+	--sl-color-accent-low: #073f24; /* jolt-900 */
+	--sl-color-accent: #00c264; /* jolt-500 */
+	--sl-color-accent-high: #00e676; /* jolt-400, the brand green: links, buttons, current page */
+
+	--sl-color-white: #ffffff;
+	--sl-color-gray-1: #f4f4f5;
+	--sl-color-gray-2: #d4d4d8;
+	--sl-color-gray-3: #a1a1aa;
+	--sl-color-gray-4: #52525b;
+	--sl-color-gray-5: #212328; /* ink-700 */
+	--sl-color-gray-6: #17181c; /* ink-800 */
+	--sl-color-black: #0d0e11; /* ink-900 */
+}
+
+/* Light theme. Darker greens keep text and buttons readable on white. */
+:root[data-theme='light'] {
+	--sl-color-accent-low: #c3ffdd; /* jolt-100 */
+	--sl-color-accent: #007a3f; /* jolt-700 */
+	--sl-color-accent-high: #045f34; /* jolt-800 */
+
+	--sl-color-white: #0d0e11; /* ink-900 */
+	--sl-color-gray-1: #17181c; /* ink-800 */
+	--sl-color-gray-2: #212328; /* ink-700 */
+	--sl-color-gray-3: #52525b;
+	--sl-color-gray-4: #a1a1aa;
+	--sl-color-gray-5: #d4d4d8;
+	--sl-color-gray-6: #f4f4f5;
+	--sl-color-gray-7: #fafafa;
+	--sl-color-black: #ffffff;
+}
+
+/* Landing page: the brand glow behind the hero, as on the server's own landing page. */
+[data-has-hero] .hero {
+	background: radial-gradient(
+		60% 70% at 50% 0%,
+		color-mix(in oklab, var(--sl-color-accent-low) 55%, transparent),
+		transparent 70%
+	);
+	border-radius: 1rem;
+}
+
+[data-has-hero] .hero img {
+	border-radius: 0.75rem;
+	border: 1px solid var(--sl-color-gray-5);
+}

@@ -3,7 +3,8 @@
 #   Local dev, database only (dev overlay publishes 5432 on loopback):
 #     docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up -d db
 #
-#   Self-hosting (adds Caddy for TLS, see docs/SELFHOSTING.md):
+#   Self-hosting from source (adds Caddy for TLS; to run the published image
+#   use the root compose.yaml, see https://petrleocompel.github.io/jolt-server/):
 #     docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.selfhost.yml up -d
 #
 #   Peelco test deploy (image from the registry, TLS via Traefik):
