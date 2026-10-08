@@ -17,8 +17,8 @@ info:
     cooldown, and are always edited from the *granter's* side.
 
 servers:
-  - url: https://jolt.example.com/api/v1
-    description: Production.
+  - url: /api/v1
+    description: The server this document was fetched from (/openapi.yaml).
   - url: http://127.0.0.1:3000/api/v1
     description: Local development.
 

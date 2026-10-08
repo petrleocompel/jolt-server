@@ -1,6 +1,6 @@
 import { cn } from "#/lib/utils.ts";
 
-/** The bolt mark shared with the iOS app and petrleocompel.github.io/jolt-server — same path, same brand. */
+/** The bolt mark shared with the iOS app and the project site — same path, same brand. */
 function JoltMark({ className }: { className?: string }) {
   return (
     <svg

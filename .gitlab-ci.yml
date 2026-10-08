@@ -96,6 +96,7 @@ container:
 # binds host port 7385.
 #
 # Required CI/CD variables (Settings -> CI/CD -> Variables, masked):
+#   APP_HOST             the test host's public name (not masked)
 #   BETTER_AUTH_SECRET   openssl rand -base64 48
 #   POSTGRES_PASSWORD
 #   APNS_KEY_ID, APNS_TEAM_ID, APNS_KEY_P8   optional, but all three are
@@ -104,9 +105,9 @@ container:
 deploy to test:
   stage: deploy
   image: docker:27-cli
-  # Runner 3, "Test server deploy", is tagged [test, …]. Requiring a
-  # `jolt` tag as well matched no runner at all, so the job sat pending
-  # forever rather than failing visibly.
+  # `test` alone: the test deploy runner carries no `jolt` tag, and requiring
+  # one matched no runner at all, so the job sat pending forever rather than
+  # failing visibly.
   tags:
     - test
   needs:
@@ -117,9 +118,7 @@ deploy to test:
     - when: never
   environment:
     name: test
-    url: https://jolt.example.com
-  variables:
-    APP_HOST: jolt.example.com
+    url: https://$APP_HOST
   before_script:
     - export DOCKER_CLIENT_TIMEOUT=300
     - export COMPOSE_HTTP_TIMEOUT=300

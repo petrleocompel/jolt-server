@@ -1,4 +1,4 @@
-{$APP_HOST:jolt.example.com} {
+{$APP_HOST} {
 	encode zstd gzip
 	reverse_proxy app:3000
 }

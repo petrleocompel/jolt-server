@@ -1,0 +1,12 @@
+# gitleaks config: the default rules, minus UUID-shaped fixtures in tests,
+# which the generic-api-key rule reads as secrets.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "UUID fixtures in tests"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''(^|/)tests/''']
+regexTarget = "secret"
+regexes = ['''^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$''']

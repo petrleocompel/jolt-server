@@ -5,7 +5,7 @@
 
 /* Jolt electric green — the single brand accent, 400 is canonical (#00E676) —
    and the near-black "ink" surfaces it sits on. Shared with the iOS app and
-   petrleocompel.github.io/jolt-server. Exposed as real Tailwind utilities (bg-jolt-400, bg-ink-900, …). */
+   the project site. Exposed as real Tailwind utilities (bg-jolt-400, bg-ink-900, …). */
 @theme {
   --color-jolt-50: #e7fff1;
   --color-jolt-100: #c3ffdd;
