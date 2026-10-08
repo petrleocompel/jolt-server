@@ -168,6 +168,24 @@ export const TestPushPayload = z.object({
 });
 
 /**
+ * What a personal access token may do. Defined once, here: the database
+ * stores these strings, `requireCaller` checks them, and the dashboard lists
+ * them.
+ *
+ * - `*`             every scope — including any added after the token was minted
+ * - `stimulus:self` `POST /me/stimulus`
+ * - `pokes:send`    `POST /pokes`, to the friends the token reaches
+ * - `friends:read`  `GET /friends`, limited to the friends the token reaches
+ * - `pokes:read`    `GET /pokes`, limited likewise
+ *
+ * `GET /me` needs none: any valid token may ask whose it is.
+ */
+export const ApiTokenScope = z.enum(["*", "stimulus:self", "pokes:send", "friends:read", "pokes:read"]);
+
+/** `selected` reaches only `friendIds` — and an empty list reaches nobody. */
+export const ApiTokenFriendScope = z.enum(["all", "selected"]);
+
+/**
  * A personal access token as listed back to its owner. The secret itself is
  * returned exactly once, by the create call, and is unrecoverable after that.
  */
@@ -180,6 +198,10 @@ export const ApiToken = z.object({
   lastUsedAt: z.iso.datetime().nullable(),
   /** Null means it lives until revoked. */
   expiresAt: z.iso.datetime().nullable(),
+  scopes: z.array(ApiTokenScope),
+  friendScope: ApiTokenFriendScope,
+  /** The friends a `selected` token reaches. Always empty for `all`. */
+  friendIds: z.array(z.uuid()),
 });
 
 /** The one response that carries the secret. Store it now or mint a new one. */
@@ -259,11 +281,24 @@ export const TestPushAckBody = z.object({
   status: AckableStatus.optional(),
 });
 
-export const CreateApiTokenBody = z.object({
-  name: z.string().min(1).max(60),
-  /** Omit for a token that lives until revoked. */
-  expiresInDays: z.int().min(1).max(365).optional(),
-});
+/**
+ * Strict for the same reason as `SelfStimulusBody`, with the stakes the
+ * other way round: a misspelt `friendIds` stripped by Zod's default would
+ * mint a token that reaches *every* friend instead of the few it named.
+ */
+export const CreateApiTokenBody = z
+  .object({
+    name: z.string().min(1).max(60),
+    /** Omit for a token that lives until revoked. */
+    expiresInDays: z.int().min(1).max(365).optional(),
+    scopes: z.array(ApiTokenScope).min(1).max(ApiTokenScope.options.length),
+    /**
+     * Present (even empty) means the token reaches only these friends;
+     * absent means every friend, now and later. Each must be a friend now.
+     */
+    friendIds: z.array(z.uuid().toLowerCase()).max(500).optional(),
+  })
+  .strict();
 
 /**
  * What to fire at your own devices. No friend, no grant — just you.
@@ -303,7 +338,10 @@ export type TestPushDeviceResult = z.infer<typeof TestPushDeviceResult>;
 export type TestPushAck = z.infer<typeof TestPushAck>;
 export type TestPushStatus = z.infer<typeof TestPushStatus>;
 export type TestPushPayload = z.infer<typeof TestPushPayload>;
+export type ApiTokenScope = z.infer<typeof ApiTokenScope>;
+export type ApiTokenFriendScope = z.infer<typeof ApiTokenFriendScope>;
 export type ApiToken = z.infer<typeof ApiToken>;
+export type CreateApiTokenBody = z.infer<typeof CreateApiTokenBody>;
 export type ApiTokenCreated = z.infer<typeof ApiTokenCreated>;
 
 /** Named components, for the openapi:check drift comparison. */
@@ -325,6 +363,8 @@ export const components = {
   TestPushAck,
   TestPushStatus,
   TestPushPayload,
+  ApiTokenScope,
+  ApiTokenFriendScope,
   ApiToken,
   ApiTokenCreated,
   Error: ApiError,

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AckBody,
+  CreateApiTokenBody,
   PokeDeliveryStatus,
   SelfStimulusBody,
   SendFriendRequestBody,
@@ -104,5 +105,46 @@ describe("TestPushBody", () => {
   // otherwise sail through unnoticed.
   it("rejects an unknown field", () => {
     expect(TestPushBody.safeParse({ friendId: "someone-else" }).success).toBe(false);
+  });
+});
+
+describe("CreateApiTokenBody", () => {
+  const FRIEND = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+
+  it("requires at least one known scope", () => {
+    expect(CreateApiTokenBody.safeParse({ name: "ci" }).success).toBe(false);
+    expect(CreateApiTokenBody.safeParse({ name: "ci", scopes: [] }).success).toBe(false);
+    expect(CreateApiTokenBody.safeParse({ name: "ci", scopes: ["admin"] }).success).toBe(false);
+    expect(CreateApiTokenBody.safeParse({ name: "ci", scopes: ["*"] }).success).toBe(true);
+  });
+
+  it("keeps an empty friend list distinct from no list at all", () => {
+    // Present-but-empty is a token that reaches nobody; absent reaches all.
+    const none = CreateApiTokenBody.parse({ name: "ci", scopes: ["pokes:send"], friendIds: [] });
+    const all = CreateApiTokenBody.parse({ name: "ci", scopes: ["pokes:send"] });
+    expect(none.friendIds).toEqual([]);
+    expect(all.friendIds).toBeUndefined();
+  });
+
+  it("lowercases friend ids, which are stored lowercase", () => {
+    const body = CreateApiTokenBody.parse({
+      name: "ci",
+      scopes: ["pokes:send"],
+      friendIds: [FRIEND.toUpperCase()],
+    });
+    expect(body.friendIds).toEqual([FRIEND]);
+  });
+
+  /**
+   * A misspelt `friendIds` stripped by Zod's default would mint a token that
+   * reaches every friend instead of the one it named.
+   */
+  it("rejects an unknown field instead of minting a wider token", () => {
+    const result = CreateApiTokenBody.safeParse({
+      name: "ci",
+      scopes: ["pokes:send"],
+      friendIDs: [FRIEND],
+    });
+    expect(result.success).toBe(false);
   });
 });

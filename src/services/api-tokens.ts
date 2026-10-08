@@ -1,21 +1,26 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, desc, eq, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "#/db";
-import { apiToken, user as userTable } from "#/db/schema";
+import { apiToken, apiTokenFriend, user as userTable } from "#/db/schema";
 import { ApiError } from "#/api/errors";
+import { friendIdsOf } from "#/services/friends";
+import { readScopes } from "#/services/token-access";
+import type { ApiTokenContext } from "#/services/token-access";
 import type { ApiTokenRow, User } from "#/db/schema";
-import type { ApiToken, ApiTokenCreated } from "#/api/schemas";
+import type { ApiToken, ApiTokenCreated, CreateApiTokenBody } from "#/api/schemas";
 
 /**
  * Personal access tokens — the credential behind "jolt me from my own
- * scripts". A user mints one in the dashboard, pastes it into whatever they
- * are wiring up, and that integration can then call the handful of
- * self-only endpoints as them.
+ * scripts", and, given the scopes for it, "let my scripts poke my friends".
+ * A user mints one in the dashboard, pastes it into whatever they are wiring
+ * up, and that integration can then call the endpoints its scopes name as
+ * them — see `requireCaller` in src/api/http.ts.
  *
  * Deliberately *not* a Better Auth session: a session expires, is minted by
  * a password, and carries the whole account with it. A PAT is long-lived,
- * revocable one at a time, and reaches only the caller's own account — see
- * `allowApiToken` in src/api/http.ts for the endpoints that accept one.
+ * revocable one at a time, and reaches only what it was minted for. Token
+ * management, devices, friend requests, permission editing and acks stay
+ * session-only whatever the scopes say.
  *
  * Only the hash is stored. `jolt_pat_` makes a leaked token greppable in a
  * repo or a log, and lets the authenticator tell a PAT from a session token
@@ -53,7 +58,7 @@ export function generateApiToken(): { token: string; tokenHash: string; prefix: 
   return { token, tokenHash: hashToken(token), prefix: secret.slice(0, PREFIX_LENGTH) };
 }
 
-function toApi(row: ApiTokenRow): ApiToken {
+function toApi(row: ApiTokenRow, friendIds: Array<string>): ApiToken {
   return {
     id: row.id,
     name: row.name,
@@ -61,28 +66,78 @@ function toApi(row: ApiTokenRow): ApiToken {
     createdAt: row.createdAt.toISOString(),
     lastUsedAt: row.lastUsedAt?.toISOString() ?? null,
     expiresAt: row.expiresAt?.toISOString() ?? null,
+    scopes: readScopes(row.scopes),
+    friendScope: row.friendScope,
+    friendIds: row.friendScope === "selected" ? [...friendIds].sort() : [],
   };
 }
 
 export async function createApiToken(
   userId: string,
-  input: { name: string; expiresInDays?: number },
+  input: CreateApiTokenBody,
 ): Promise<ApiTokenCreated> {
   const { token, tokenHash, prefix } = generateApiToken();
   const expiresAt = input.expiresInDays
     ? new Date(Date.now() + input.expiresInDays * 24 * 60 * 60 * 1000)
     : null;
+  const scopes = [...new Set(input.scopes)];
 
-  const [row] = await db
-    .insert(apiToken)
-    .values({ userId, name: input.name.trim(), tokenHash, prefix, expiresAt })
-    .returning();
+  // Presence, not length, is what makes a token `selected`: an explicit
+  // empty list is a token that reaches nobody, never one that reaches all.
+  const friendIds = input.friendIds ? [...new Set(input.friendIds)] : null;
+  if (friendIds && friendIds.length > 0) {
+    const friends = new Set(await friendIdsOf(userId));
+    const stranger = friendIds.find((id) => !friends.has(id));
+    if (stranger) {
+      // Same wording whether the id is a stranger or nobody at all, as with
+      // every other friend lookup — no account discovery through tokens.
+      throw ApiError.badRequest(`friendIds: ${stranger} is not one of your friends.`);
+    }
+  }
+
+  const row = await db.transaction(async (tx) => {
+    const [inserted] = await tx
+      .insert(apiToken)
+      .values({
+        userId,
+        name: input.name.trim(),
+        tokenHash,
+        prefix,
+        expiresAt,
+        scopes,
+        friendScope: friendIds ? "selected" : "all",
+      })
+      .returning();
+    if (!inserted) return null;
+    if (friendIds && friendIds.length > 0) {
+      await tx
+        .insert(apiTokenFriend)
+        .values(friendIds.map((friendId) => ({ tokenId: inserted.id, friendId })));
+    }
+    return inserted;
+  });
 
   if (!row) throw ApiError.badRequest("Could not create the token.");
 
   // The only time the secret is ever returned. There is no way to recover it
   // afterwards — a lost token is replaced, not looked up.
-  return { ...toApi(row), token };
+  return { ...toApi(row, friendIds ?? []), token };
+}
+
+/** Allowlists for a set of tokens, keyed by token id. */
+async function friendIdsByToken(tokenIds: Array<string>): Promise<Map<string, Array<string>>> {
+  const byToken = new Map<string, Array<string>>();
+  if (tokenIds.length === 0) return byToken;
+  const rows = await db
+    .select()
+    .from(apiTokenFriend)
+    .where(inArray(apiTokenFriend.tokenId, tokenIds));
+  for (const row of rows) {
+    const list = byToken.get(row.tokenId) ?? [];
+    list.push(row.friendId);
+    byToken.set(row.tokenId, list);
+  }
+  return byToken;
 }
 
 export async function listApiTokens(userId: string): Promise<Array<ApiToken>> {
@@ -91,7 +146,10 @@ export async function listApiTokens(userId: string): Promise<Array<ApiToken>> {
     .from(apiToken)
     .where(eq(apiToken.userId, userId))
     .orderBy(desc(apiToken.createdAt));
-  return rows.map(toApi);
+  const allowlists = await friendIdsByToken(
+    rows.filter((row) => row.friendScope === "selected").map((row) => row.id),
+  );
+  return rows.map((row) => toApi(row, allowlists.get(row.id) ?? []));
 }
 
 /** Revoking is deleting: a token nobody can present is not worth keeping. */
@@ -106,11 +164,13 @@ export async function revokeApiToken(userId: string, tokenId: string): Promise<v
 }
 
 /**
- * The account behind a presented token, or null. Expired tokens are rejected
- * here rather than deleted — the row is what tells the user in the dashboard
- * why their integration stopped working.
+ * The account and token behind a presented secret, or null. Expired tokens
+ * are rejected here rather than deleted — the row is what tells the user in
+ * the dashboard why their integration stopped working.
  */
-export async function userForApiToken(presented: string): Promise<User | null> {
+export async function authenticateApiToken(
+  presented: string,
+): Promise<{ user: User; token: ApiTokenContext } | null> {
   const tokenHash = hashToken(presented);
 
   const [match] = await db
@@ -131,8 +191,26 @@ export async function userForApiToken(presented: string): Promise<User | null> {
 
   if (match.token.expiresAt && match.token.expiresAt.getTime() <= Date.now()) return null;
 
+  // Read per request, not cached with the token: unfriending someone has to
+  // take them off every allowlist at once, not whenever a cache expires.
+  const friendIds =
+    match.token.friendScope === "selected"
+      ? ((await friendIdsByToken([match.token.id])).get(match.token.id) ?? [])
+      : [];
+
   await touch(match.token.id);
-  return match.account;
+  return { user: match.account, token: toContext(match.token, friendIds) };
+}
+
+function toContext(row: ApiTokenRow, friendIds: Array<string>): ApiTokenContext {
+  return {
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    scopes: readScopes(row.scopes),
+    friendScope: row.friendScope,
+    friendIds: new Set(friendIds),
+  };
 }
 
 /** Best-effort, and coarse on purpose — see LAST_USED_RESOLUTION_MS. */

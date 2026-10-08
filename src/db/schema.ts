@@ -6,6 +6,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -40,6 +41,14 @@ export const friendRequestStatus = pgEnum("friend_request_status", [
 export const devicePlatform = pgEnum("device_platform", ["ios"]);
 
 export const userRole = pgEnum("user_role", ["user", "admin"]);
+
+/**
+ * Which friends a personal access token may reach. `selected` is a state of
+ * its own rather than "whatever `api_token_friend` lists": a list emptied by
+ * unfriending must keep meaning *nobody*, never quietly fall back to
+ * everyone.
+ */
+export const apiTokenFriendScope = pgEnum("api_token_friend_scope", ["all", "selected"]);
 
 // ---------------------------------------------------------------------------
 // Better Auth tables
@@ -231,8 +240,9 @@ export const deviceToken = pgTable(
 
 /**
  * A personal access token: a long-lived credential a user mints for their own
- * scripts, so a third-party integration can jolt *them* without being handed
- * an account password or a session that expires underneath it.
+ * scripts, so a third-party integration can jolt *them* — or, given the
+ * scopes for it, poke their friends — without being handed an account
+ * password or a session that expires underneath it.
  *
  * Only the sha256 of the secret is stored. The secret is shown once, at
  * creation, and is unrecoverable afterwards — a leaked database gives an
@@ -256,8 +266,44 @@ export const apiToken = pgTable(
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     /** Null means it lives until revoked. */
     expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /**
+     * What the token may do — `ApiTokenScope` in src/api/schemas.ts. Text
+     * rather than an enum so a scope added later needs no migration, and so
+     * `*` can keep meaning "every scope, including ones that don't exist
+     * yet". Unknown values are dropped when the row is read.
+     */
+    scopes: text("scopes").array().notNull(),
+    /** `selected` means only the friends listed in `api_token_friend`. */
+    friendScope: apiTokenFriendScope("friend_scope").notNull().default("all"),
   },
-  (t) => [index("api_token_user_idx").on(t.userId)],
+  (t) => [
+    index("api_token_user_idx").on(t.userId),
+    // An empty scope list is a token that can do nothing but `GET /me` —
+    // never what anyone meant to mint.
+    check("api_token_scopes_nonempty", sql`cardinality(${t.scopes}) > 0`),
+  ],
+);
+
+/**
+ * The friends a `friend_scope = 'selected'` token may reach. Rows go when
+ * the friendship does (see `unfriend`), so a token never keeps a handle on
+ * somebody its owner has since dropped — and an emptied list stays empty.
+ */
+export const apiTokenFriend = pgTable(
+  "api_token_friend",
+  {
+    tokenId: uuid("token_id")
+      .notNull()
+      .references(() => apiToken.id, { onDelete: "cascade" }),
+    friendId: text("friend_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.tokenId, t.friendId] }),
+    // Serves the unfriend cleanup, which looks rows up by friend.
+    index("api_token_friend_friend_idx").on(t.friendId),
+  ],
 );
 
 /**
@@ -308,8 +354,14 @@ export const deviceTokenRelations = relations(deviceToken, ({ one }) => ({
   user: one(user, { fields: [deviceToken.userId], references: [user.id] }),
 }));
 
-export const apiTokenRelations = relations(apiToken, ({ one }) => ({
+export const apiTokenRelations = relations(apiToken, ({ one, many }) => ({
   user: one(user, { fields: [apiToken.userId], references: [user.id] }),
+  friends: many(apiTokenFriend),
+}));
+
+export const apiTokenFriendRelations = relations(apiTokenFriend, ({ one }) => ({
+  token: one(apiToken, { fields: [apiTokenFriend.tokenId], references: [apiToken.id] }),
+  friend: one(user, { fields: [apiTokenFriend.friendId], references: [user.id] }),
 }));
 
 export const pokeEventRelations = relations(pokeEvent, ({ one }) => ({
@@ -331,4 +383,5 @@ export type FriendPermission = typeof friendPermission.$inferSelect;
 export type FriendRequestRow = typeof friendRequest.$inferSelect;
 export type DeviceToken = typeof deviceToken.$inferSelect;
 export type ApiTokenRow = typeof apiToken.$inferSelect;
+export type ApiTokenFriendRow = typeof apiTokenFriend.$inferSelect;
 export type PokeEvent = typeof pokeEvent.$inferSelect;

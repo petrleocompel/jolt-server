@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, ne, or, sql } from "drizzle-orm";
 import { db } from "#/db";
 import { friendPermission, pokeEvent, user as userTable } from "#/db/schema";
 import type { PokeEvent as PokeEventRow, User } from "#/db/schema";
@@ -7,6 +7,8 @@ import { pushSender } from "#/push";
 import type { AckableStatus, PokeEvent, StimulusConfig } from "#/api/schemas";
 import { activeTargets, markUnregistered } from "#/services/devices";
 import { areFriends } from "#/services/friends";
+import { pokeVisibility, tokenReachesFriend } from "#/services/token-access";
+import type { ApiTokenContext } from "#/services/token-access";
 
 function toApi(
   row: PokeEventRow,
@@ -61,19 +63,30 @@ async function replayOf(
  * `pokeId` makes it idempotent: a client that lost the connection before the
  * answer arrived can send the same request again, and gets back the poke
  * that was recorded instead of a second one on its friend's wrist.
+ *
+ * `token` is the personal access token the request came in on, or null for
+ * the account holder in person. A token only ever narrows what the grant
+ * allows: it may reach fewer friends, never more.
  */
 export async function sendPoke(
   senderId: string,
   friendId: string,
   stimulus: StimulusConfig,
-  pokeId?: string,
+  options: { pokeId?: string; token?: ApiTokenContext | null } = {},
 ): Promise<{ event: PokeEvent; replayed: boolean }> {
+  const { pokeId, token = null } = options;
   if (senderId === friendId) {
     throw ApiError.forbidden("You can't poke yourself.");
   }
   if (pokeId) {
     const replay = await replayOf(pokeId, senderId);
     if (replay) return replay;
+  }
+  // Before the friendship check, and worded about the token: the allowlist
+  // is the owner's own choice, so saying it excludes someone tells the
+  // integration nothing its owner doesn't know.
+  if (token && !tokenReachesFriend(token, friendId)) {
+    throw ApiError.forbidden("This token isn't allowed to poke that friend.");
   }
   if (!(await areFriends(senderId, friendId))) {
     // Deliberately the same 403 as a missing grant: a non-friend learns
@@ -322,12 +335,32 @@ export async function ackPoke(
   return toApi(row, userId, sender);
 }
 
-/** Activity log, sent and received, newest first. */
+/**
+ * Activity log, sent and received, newest first. Through a token, only what
+ * `pokeVisibility` lets it see — filtered in the query, so `limit` still
+ * means "this many events the token may see" rather than "this many, minus
+ * the ones it may not".
+ */
 export async function listPokes(
   userId: string,
   options: { limit: number; before?: string },
+  token: ApiTokenContext | null = null,
 ): Promise<Array<PokeEvent>> {
   const filters = [or(eq(pokeEvent.senderId, userId), eq(pokeEvent.recipientId, userId))!];
+  if (token) {
+    const visible = pokeVisibility(token);
+    const self = and(eq(pokeEvent.senderId, userId), eq(pokeEvent.recipientId, userId))!;
+    const withFriends =
+      visible.friends === "all"
+        ? ne(pokeEvent.senderId, pokeEvent.recipientId)
+        : visible.friends.length === 0
+          ? sql`false`
+          : or(
+              and(eq(pokeEvent.senderId, userId), inArray(pokeEvent.recipientId, visible.friends)),
+              and(eq(pokeEvent.recipientId, userId), inArray(pokeEvent.senderId, visible.friends)),
+            )!;
+    filters.push(visible.includeSelf ? or(withFriends, self)! : withFriends);
+  }
   if (options.before) {
     filters.push(lt(pokeEvent.createdAt, new Date(options.before)));
   }

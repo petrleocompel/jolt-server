@@ -1,6 +1,8 @@
 import { and, eq, inArray, or } from "drizzle-orm";
 import { db } from "#/db";
 import {
+  apiToken,
+  apiTokenFriend,
   friendPermission,
   friendRequest,
   friendship,
@@ -9,6 +11,8 @@ import {
 import type { User } from "#/db/schema";
 import { ApiError } from "#/api/errors";
 import { normalizeHandle } from "#/lib/invite";
+import { tokenReachesFriend } from "#/services/token-access";
+import type { ApiTokenContext } from "#/services/token-access";
 import type {
   Friend,
   FriendPermissionSet,
@@ -44,13 +48,27 @@ export async function areFriends(a: string, b: string): Promise<boolean> {
   return Boolean(row);
 }
 
-export async function listFriends(userId: string): Promise<Array<Friend>> {
+/** Everyone the user is currently friends with, as ids. */
+export async function friendIdsOf(userId: string): Promise<Array<string>> {
   const links = await db
     .select()
     .from(friendship)
     .where(or(eq(friendship.userA, userId), eq(friendship.userB, userId)));
+  return links.map((l) => (l.userA === userId ? l.userB : l.userA));
+}
 
-  const friendIds = links.map((l) => (l.userA === userId ? l.userB : l.userA));
+/**
+ * The caller's friends with both directions of permission. Through a token
+ * whose friend scope is `selected`, only the friends it reaches — an
+ * integration allowed to poke one person does not get the whole friend list.
+ */
+export async function listFriends(
+  userId: string,
+  token: ApiTokenContext | null = null,
+): Promise<Array<Friend>> {
+  const friendIds = (await friendIdsOf(userId)).filter(
+    (id) => !token || tokenReachesFriend(token, id),
+  );
   if (friendIds.length === 0) return [];
 
   const [people, permissions] = await Promise.all([
@@ -123,6 +141,19 @@ export async function unfriend(userId: string, friendId: string): Promise<void> 
         or(
           and(eq(friendPermission.granterId, userId), eq(friendPermission.granteeId, friendId)),
           and(eq(friendPermission.granterId, friendId), eq(friendPermission.granteeId, userId)),
+        ),
+      );
+    // So do token allowlist entries, on both people's tokens. Re-friending
+    // later must not quietly re-arm an integration aimed at the old
+    // friendship; a `selected` token emptied here reaches nobody.
+    const tokensOf = (owner: string) =>
+      tx.select({ id: apiToken.id }).from(apiToken).where(eq(apiToken.userId, owner));
+    await tx
+      .delete(apiTokenFriend)
+      .where(
+        or(
+          and(eq(apiTokenFriend.friendId, friendId), inArray(apiTokenFriend.tokenId, tokensOf(userId))),
+          and(eq(apiTokenFriend.friendId, userId), inArray(apiTokenFriend.tokenId, tokensOf(friendId))),
         ),
       );
   });

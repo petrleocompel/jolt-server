@@ -4,7 +4,9 @@ import { ApiError } from "#/api/errors";
 import { db } from "#/db";
 import { user as userTable } from "#/db/schema";
 import { eq } from "drizzle-orm";
-import { isApiTokenCandidate, userForApiToken } from "#/services/api-tokens";
+import { authenticateApiToken, isApiTokenCandidate } from "#/services/api-tokens";
+import { tokenHasScope } from "#/services/token-access";
+import type { ApiTokenContext, RequiredScope } from "#/services/token-access";
 import type { User } from "#/db/schema";
 
 export function json(body: unknown, status = 200): Response {
@@ -63,46 +65,74 @@ function bearerToken(request: Request): string | null {
   return rest.join(" ").trim() || null;
 }
 
-export interface AuthOptions {
-  /**
-   * Also accept a personal access token. Only for endpoints that act on the
-   * caller's own account: a PAT is a long-lived credential someone pasted
-   * into a third-party integration, so it must never be able to mint another
-   * token, change the account, or reach anybody else's data.
-   */
-  allowApiToken?: boolean;
+/**
+ * What a token-accepting endpoint asks of a personal access token: one named
+ * scope, or — for `GET /me` alone — merely that the token is valid.
+ */
+export type TokenAccess = { scope: RequiredScope } | { anyScope: true };
+
+/** Who is calling, and through which token. `token` is null for a session. */
+export interface Caller {
+  user: User;
+  token: ApiTokenContext | null;
 }
 
 /**
- * Resolves the caller from the bearer token (or session cookie, which is what
- * the web UI uses). Throws 401 when there is no valid session.
+ * The same 403 every session-only endpoint gives a token: the token is fine,
+ * the endpoint is not — so an integrator does not go hunting for a bad
+ * secret the way a bare 401 would send them.
  */
-export async function requireUser(
-  request: Request,
-  options: AuthOptions = {},
-): Promise<User> {
-  const presented = bearerToken(request);
+function tokenNotAccepted(): ApiError {
+  return ApiError.forbidden(
+    "API tokens can't be used here — this endpoint needs a signed-in session.",
+  );
+}
 
-  // A PAT is recognisable by its prefix, so it never reaches Better Auth —
-  // and an endpoint that does not opt in says so rather than returning the
-  // bare 401 that would send an integrator hunting for a bad token.
-  if (presented && isApiTokenCandidate(presented)) {
-    if (!options.allowApiToken) {
-      throw ApiError.forbidden(
-        "API tokens only work on your own account's endpoints. Sign in for this one.",
-      );
-    }
-    const row = await userForApiToken(presented);
-    if (!row) throw ApiError.unauthorized("Invalid or expired API token.");
-    return row;
-  }
-
+async function sessionUser(request: Request): Promise<User> {
   const session = await auth.api.getSession({ headers: request.headers });
   if (!session?.user.id) throw ApiError.unauthorized();
 
   const [row] = await db.select().from(userTable).where(eq(userTable.id, session.user.id)).limit(1);
   if (!row) throw ApiError.unauthorized();
   return row;
+}
+
+/**
+ * Resolves the caller from the bearer token (or session cookie, which is what
+ * the web UI uses). Throws 401 when there is no valid session.
+ *
+ * Session only. A personal access token is a long-lived credential someone
+ * pasted into a third-party integration, so it must never mint another token,
+ * register a device, make or accept a friend, edit what friends may send, or
+ * ack a poke on the owner's behalf — every endpoint that uses this instead of
+ * `requireCaller` answers a token with 403.
+ */
+export async function requireUser(request: Request): Promise<User> {
+  const presented = bearerToken(request);
+  // A PAT is recognisable by its prefix, so it never reaches Better Auth.
+  if (presented && isApiTokenCandidate(presented)) throw tokenNotAccepted();
+  return sessionUser(request);
+}
+
+/**
+ * Like `requireUser`, but also accepts a personal access token that carries
+ * `access.scope` (or `*`). The token comes back with the user because the
+ * scope is only the first check: whom it may reach, and how hard and how
+ * often it may fire, are the services' to enforce, and they need the token
+ * to do it. A session caller gets `token: null` and is not limited at all.
+ */
+export async function requireCaller(request: Request, access: TokenAccess): Promise<Caller> {
+  const presented = bearerToken(request);
+  if (!presented || !isApiTokenCandidate(presented)) {
+    return { user: await sessionUser(request), token: null };
+  }
+
+  const match = await authenticateApiToken(presented);
+  if (!match) throw ApiError.unauthorized("Invalid or expired API token.");
+  if ("scope" in access && !tokenHasScope(match.token.scopes, access.scope)) {
+    throw ApiError.forbidden(`This token lacks the "${access.scope}" scope.`);
+  }
+  return match;
 }
 
 export async function requireAdmin(request: Request): Promise<User> {

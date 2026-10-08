@@ -29,9 +29,8 @@ tags:
   - name: auth
   - name: me
     description: >
-      Your own account. These endpoints involve nobody else, which is why
-      `/me` and `/me/stimulus` also accept a personal access token
-      (`patAuth`) — token management itself does not.
+      Your own account. `/me` and `/me/stimulus` also accept a personal
+      access token (`patAuth`) — token management itself does not.
   - name: devices
   - name: friends
   - name: pokes
@@ -107,6 +106,13 @@ paths:
     get:
       tags: [auth]
       summary: Current account, including your own invite code
+      description: >
+        Also readable with any valid personal access token, whatever its
+        scopes — an integration usually needs the account's id or handle
+        first.
+      security:
+        - bearerAuth: []
+        - patAuth: []
       responses:
         '200':
           description: OK
@@ -121,8 +127,8 @@ paths:
       description: >
         "Let my own code jolt me." No friendship and no permission grant is
         involved — the only person in this request is the one holding the
-        credential — so this is the one poke-shaped call a personal access
-        token may make.
+        credential. A personal access token needs the `stimulus:self` scope
+        (or `*`).
 
 
         It is still recorded as a `PokeEvent` from you to you (so it shows in
@@ -148,12 +154,22 @@ paths:
               additionalProperties: false
               properties:
                 stimulus: { $ref: '#/components/schemas/StimulusConfig' }
+      security:
+        - bearerAuth: []
+        - patAuth: []
       responses:
         '201':
           description: Recorded and queued for push delivery, `status` `pending`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PokeEvent' }
+        '403':
+          description: >
+            A personal access token without the `stimulus:self` scope —
+            `This token lacks the "stimulus:self" scope.`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '404':
           description: No registered devices to fire it on
           content:
@@ -190,14 +206,22 @@ paths:
       summary: Mint a personal access token
       description: >
         The response is the only time the secret is returned; only its hash is
-        stored, so a lost token is replaced rather than looked up.
+        stored, so a lost token is replaced rather than looked up. A token
+        cannot be edited after it is minted — mint a new one and revoke the
+        old.
+
+
+        The body is **strict**: an unknown field is a 400. A misspelt
+        `friendIds` would otherwise be dropped, and the token would reach
+        every friend instead of the ones it named.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [name]
+              required: [name, scopes]
+              additionalProperties: false
               properties:
                 name:
                   type: string
@@ -209,12 +233,33 @@ paths:
                   minimum: 1
                   maximum: 365
                   description: Omit for a token that lives until revoked.
+                scopes:
+                  type: array
+                  minItems: 1
+                  items: { $ref: '#/components/schemas/ApiTokenScope' }
+                  description: What the token may do. See `ApiTokenScope`.
+                friendIds:
+                  type: array
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+                  description: >
+                    Present — even empty — makes the token `selected`: it
+                    reaches only these friends (and an empty list reaches
+                    nobody). Absent makes it `all`: every friend, including
+                    ones added later. Each id must be a current friend.
       responses:
         '201':
           description: Created — save `token` now
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ApiTokenCreated' }
+        '400':
+          description: >
+            Invalid body — including an unknown field, an empty `scopes`, or
+            a `friendIds` entry that is not one of your friends.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /me/tokens/{tokenId}:
     delete:
@@ -417,6 +462,12 @@ paths:
     get:
       tags: [friends]
       summary: Accepted friends, with the permissions each side has granted
+      description: >
+        A personal access token needs `friends:read` (or `*`). A token whose
+        friend scope is `selected` sees only the friends it was minted for.
+      security:
+        - bearerAuth: []
+        - patAuth: []
       responses:
         '200':
           description: OK
@@ -425,6 +476,11 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Friend' }
+        '403':
+          description: A personal access token without the `friends:read` scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /friends/{friendId}:
     delete:
@@ -531,6 +587,15 @@ paths:
     get:
       tags: [pokes]
       summary: Activity log — sent and received, newest first
+      description: >
+        A personal access token needs `pokes:read` (or `*`) and sees only
+        part of the log: pokes with the friends it reaches (every friend,
+        past ones included, for friend scope `all`; only the listed ones for
+        `selected`), plus your own self-stimuli if — and only if — it may
+        fire them (`stimulus:self` or `*`).
+      security:
+        - bearerAuth: []
+        - patAuth: []
       parameters:
         - name: limit
           in: query
@@ -547,6 +612,11 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/PokeEvent' }
+        '403':
+          description: A personal access token without the `pokes:read` scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
     post:
       tags: [pokes]
       summary: Send a poke
@@ -559,6 +629,14 @@ paths:
         best-effort silent `content-available` push (may fire without the
         recipient touching anything, but iOS gives no delivery-time
         guarantee).
+
+
+        A personal access token needs `pokes:send` (or `*`), and may only
+        poke friends it reaches. It never widens what the friend has granted
+        you.
+      security:
+        - bearerAuth: []
+        - patAuth: []
       requestBody:
         required: true
         content:
@@ -604,7 +682,11 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PokeEvent' }
         '403':
-          description: Recipient hasn't allowed this stimulus, or intensity exceeds their cap
+          description: >
+            Recipient hasn't allowed this stimulus, or intensity exceeds their
+            cap. With a personal access token, also: `This token lacks the
+            "pokes:send" scope.`, or `This token isn't allowed to poke that
+            friend.` for a friend outside a `selected` token's list.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -651,9 +733,27 @@ components:
       scheme: bearer
       description: >
         A personal access token (`jolt_pat_…`), minted at `POST /me/tokens`
-        and pasted into a third-party integration. Accepted only on `GET /me`
-        and `POST /me/stimulus`; anywhere else it is a 403, not a 401, so an
-        integrator is told the token is fine but the endpoint is not.
+        and pasted into a third-party integration. What it may do is set by
+        its scopes (see `ApiTokenScope`):
+
+
+        - `GET /me` — any valid token
+
+        - `POST /me/stimulus` — `stimulus:self`
+
+        - `POST /pokes` — `pokes:send`
+
+        - `GET /friends` — `friends:read`
+
+        - `GET /pokes` — `pokes:read`
+
+
+        `*` grants every scope, including ones added later. A token missing
+        the scope an endpoint needs gets `403 This token lacks the "<scope>"
+        scope.` Every other endpoint — token management, devices, friend
+        requests, permission editing, acks — is session-only and answers a
+        token with 403, not 401, so an integrator is told the token is fine
+        but the endpoint is not.
 
   parameters:
     FriendId:
@@ -969,13 +1069,32 @@ components:
           sentAt: '2026-09-07T10:15:00Z'
           source: web
 
+    ApiTokenScope:
+      type: string
+      enum: ['*', 'stimulus:self', 'pokes:send', 'friends:read', 'pokes:read']
+      description: >
+        What a personal access token may do. `*` is every scope, including
+        any added after the token was minted. `stimulus:self` fires at your
+        own devices (`POST /me/stimulus`). `pokes:send` pokes friends
+        (`POST /pokes`). `friends:read` lists them (`GET /friends`).
+        `pokes:read` reads the activity log (`GET /pokes`). `GET /me` needs
+        no scope.
+
+    ApiTokenFriendScope:
+      type: string
+      enum: [all, selected]
+      description: >
+        `all`: every friend, including ones added later. `selected`: only
+        `friendIds` — and an empty list, which unfriending can leave behind,
+        reaches nobody rather than everybody.
+
     ApiToken:
       type: object
       description: >
         A personal access token as listed back to its owner. The secret is
         returned exactly once, by `POST /me/tokens`, and only its hash is
         stored — there is no endpoint that can show it again.
-      required: [id, name, prefix, createdAt, lastUsedAt, expiresAt]
+      required: [id, name, prefix, createdAt, lastUsedAt, expiresAt, scopes, friendScope, friendIds]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -995,6 +1114,16 @@ components:
           format: date-time
           nullable: true
           description: Null means it lives until revoked.
+        scopes:
+          type: array
+          items: { $ref: '#/components/schemas/ApiTokenScope' }
+        friendScope: { $ref: '#/components/schemas/ApiTokenFriendScope' }
+        friendIds:
+          type: array
+          items: { type: string, format: uuid }
+          description: >
+            The friends a `selected` token reaches. Always empty for `all`.
+            Unfriending someone removes them from every token on both sides.
 
     ApiTokenCreated:
       allOf:

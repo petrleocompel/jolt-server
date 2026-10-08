@@ -251,11 +251,12 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
   await test.step("minting one returns the secret exactly once", async () => {
     const response = await request.post(`${API}/me/tokens`, {
       headers: auth(erin.token),
-      data: { name: "home assistant" },
+      data: { name: "home assistant", scopes: ["stimulus:self"] },
     });
     expect(response.status()).toBe(201);
     const created = await response.json();
     expect(created.token).toMatch(/^jolt_pat_/);
+    expect(created).toMatchObject({ scopes: ["stimulus:self"], friendScope: "all", friendIds: [] });
     expect(created.lastUsedAt).toBeNull();
     expect(created.expiresAt).toBeNull();
     token = created.token;
@@ -277,7 +278,9 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
 
   await test.step("but reaches neither other people nor its own management", async () => {
     // 403, not 401: the token is fine, the endpoint is not.
-    expect((await request.get(`${API}/friends`, { headers: auth(token) })).status()).toBe(403);
+    const friends = await request.get(`${API}/friends`, { headers: auth(token) });
+    expect(friends.status()).toBe(403);
+    expect((await friends.json()).message).toBe('This token lacks the "friends:read" scope.');
     // A token that could mint another would survive its own revocation.
     expect((await request.get(`${API}/me/tokens`, { headers: auth(token) })).status()).toBe(403);
   });
@@ -381,5 +384,163 @@ test("a personal access token drives the self-stimulus endpoint, and nothing els
     expect(
       (await request.delete(`${API}/me/tokens/${tokenId}`, { headers: auth(erin.token) })).status(),
     ).toBe(404);
+  });
+});
+
+/** Makes two accounts friends: `from` asks, `to` accepts. */
+async function befriend(
+  request: APIRequestContext,
+  from: { token: string },
+  to: { token: string; user: { handle: string } },
+) {
+  const asked = await request.post(`${API}/friends/requests`, {
+    headers: auth(from.token),
+    data: { handle: to.user.handle },
+  });
+  expect(asked.status()).toBe(201);
+  const incoming = (await (await request.get(`${API}/friends/requests`, { headers: auth(to.token) })).json())
+    .incoming as Array<{ id: string }>;
+  const accepted = await request.post(`${API}/friends/requests/${incoming[0]!.id}/accept`, {
+    headers: auth(to.token),
+  });
+  expect(accepted.status()).toBe(200);
+}
+
+async function mint(request: APIRequestContext, owner: { token: string }, data: object) {
+  const response = await request.post(`${API}/me/tokens`, { headers: auth(owner.token), data });
+  expect(response.status()).toBe(201);
+  return (await response.json()) as { id: string; token: string };
+}
+
+test("a scoped token pokes only the friends it was minted for", async ({ request }) => {
+  const alice = await signup(request, `alice${unique()}`);
+  const bob = await signup(request, `bob${unique()}`);
+  const carol = await signup(request, `carol${unique()}`);
+  await befriend(request, alice, bob);
+  await befriend(request, alice, carol);
+  for (const friend of [bob, carol]) {
+    const granted = await request.put(`${API}/friends/${alice.user.id}/permissions/vibe`, {
+      headers: auth(friend.token),
+      data: { isAllowed: true, maxIntensity: 80, cooldownSeconds: 0 },
+    });
+    expect(granted.status()).toBe(200);
+  }
+  const vibe = { kind: "vibe", intensity: 20, repetitions: 1 };
+
+  const forBob = await mint(request, alice, {
+    name: "bob only",
+    scopes: ["pokes:send", "friends:read"],
+    friendIds: [bob.user.id.toUpperCase()],
+  });
+
+  await test.step("it sees and pokes only the listed friend", async () => {
+    const friends = await (await request.get(`${API}/friends`, { headers: auth(forBob.token) })).json();
+    expect(friends.map((f: { id: string }) => f.id)).toEqual([bob.user.id]);
+
+    const toBob = await request.post(`${API}/pokes`, {
+      headers: auth(forBob.token),
+      data: { friendId: bob.user.id, stimulus: vibe },
+    });
+    expect(toBob.status()).toBe(201);
+
+    const toCarol = await request.post(`${API}/pokes`, {
+      headers: auth(forBob.token),
+      data: { friendId: carol.user.id, stimulus: vibe },
+    });
+    expect(toCarol.status()).toBe(403);
+    expect((await toCarol.json()).message).toBe("This token isn't allowed to poke that friend.");
+  });
+
+  await test.step("and nothing its scopes leave out", async () => {
+    const feed = await request.get(`${API}/pokes`, { headers: auth(forBob.token) });
+    expect(feed.status()).toBe(403);
+    expect((await feed.json()).message).toBe('This token lacks the "pokes:read" scope.');
+    const self = await request.post(`${API}/me/stimulus`, {
+      headers: auth(forBob.token),
+      data: { stimulus: vibe },
+    });
+    expect(self.status()).toBe(403);
+    // Session-only, whatever the scopes.
+    expect(
+      (await request.get(`${API}/friends/requests`, { headers: auth(forBob.token) })).status(),
+    ).toBe(403);
+  });
+
+  await test.step("a wildcard token reaches every friend and every read", async () => {
+    const everything = await mint(request, alice, { name: "all", scopes: ["*"] });
+    const friends = await (await request.get(`${API}/friends`, { headers: auth(everything.token) })).json();
+    expect(friends).toHaveLength(2);
+    const feed = await request.get(`${API}/pokes`, { headers: auth(everything.token) });
+    expect(feed.status()).toBe(200);
+  });
+
+  await test.step("a reader with a list sees only those friends' pokes", async () => {
+    // carol pokes alice so there is an event with someone off the list.
+    const grant = await request.put(`${API}/friends/${carol.user.id}/permissions/vibe`, {
+      headers: auth(alice.token),
+      data: { isAllowed: true, maxIntensity: 80, cooldownSeconds: 0 },
+    });
+    expect(grant.status()).toBe(200);
+    expect(
+      (
+        await request.post(`${API}/pokes`, {
+          headers: auth(carol.token),
+          data: { friendId: alice.user.id, stimulus: vibe },
+        })
+      ).status(),
+    ).toBe(201);
+
+    const reader = await mint(request, alice, {
+      name: "bob feed",
+      scopes: ["pokes:read"],
+      friendIds: [bob.user.id],
+    });
+    const feed = await (await request.get(`${API}/pokes`, { headers: auth(reader.token) })).json();
+    expect(feed.length).toBeGreaterThan(0);
+    expect(feed.every((e: { friendHandle: string }) => e.friendHandle === bob.user.handle)).toBe(
+      true,
+    );
+  });
+
+  await test.step("an empty list reaches nobody", async () => {
+    const nobody = await mint(request, alice, {
+      name: "nobody",
+      scopes: ["pokes:send", "friends:read"],
+      friendIds: [],
+    });
+    expect(await (await request.get(`${API}/friends`, { headers: auth(nobody.token) })).json())
+      .toEqual([]);
+  });
+
+  await test.step("a stranger cannot be put on the list", async () => {
+    const stranger = await signup(request, `dave${unique()}`);
+    const response = await request.post(`${API}/me/tokens`, {
+      headers: auth(alice.token),
+      data: { name: "nope", scopes: ["pokes:send"], friendIds: [stranger.user.id] },
+    });
+    expect(response.status()).toBe(400);
+  });
+
+  await test.step("unfriending empties the list for good", async () => {
+    expect(
+      (await request.delete(`${API}/friends/${bob.user.id}`, { headers: auth(alice.token) })).status(),
+    ).toBe(204);
+    const tokens = await (await request.get(`${API}/me/tokens`, { headers: auth(alice.token) })).json();
+    expect(tokens.find((t: { id: string }) => t.id === forBob.id)).toMatchObject({
+      friendScope: "selected",
+      friendIds: [],
+    });
+
+    // Friends again — but the token stays aimed at nobody.
+    await befriend(request, alice, bob);
+    await request.put(`${API}/friends/${alice.user.id}/permissions/vibe`, {
+      headers: auth(bob.token),
+      data: { isAllowed: true, maxIntensity: 80, cooldownSeconds: 0 },
+    });
+    const poke = await request.post(`${API}/pokes`, {
+      headers: auth(forBob.token),
+      data: { friendId: bob.user.id, stimulus: vibe },
+    });
+    expect(poke.status()).toBe(403);
   });
 });
