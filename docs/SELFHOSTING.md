@@ -38,6 +38,24 @@ Sign-in is refused from an origin the server doesn't trust.
 
 Leave the `APNS_*` values blank for now.
 
+## Automated pokes
+
+Users can mint personal access tokens and, with the `pokes:send` scope, let
+their scripts poke friends. Whether a script may poke someone who has not
+answered the question for that friend is a server-wide policy:
+
+| `AUTOMATION_CONSENT_REQUIRED` | Effect |
+|---|---|
+| unset (default) | An admin decides at **/admin/settings**. Out of the box: allowed unless the recipient blocks it. |
+| `false` | Allowed unless the recipient blocks it. Locked — the admin page shows it read-only. |
+| `true` | Blocked until the recipient allows it, per friend and stimulus. Locked likewise. |
+
+It takes `true`/`false`, `1`/`0`, `yes`/`no` or `on`/`off`; anything else
+stops the server from starting rather than guessing. A recipient's explicit
+Allow or Block always wins under either policy, and changing the policy never
+rewrites one — switching to `true` only affects grants nobody has answered,
+which the admin page counts for you before you flip it.
+
 ## 2. Start it
 
 ```bash

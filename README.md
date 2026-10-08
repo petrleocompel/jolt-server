@@ -119,11 +119,83 @@ treat a long-`pending` poke as undelivered.
 
 ## Your own integrations
 
+A **personal access token** (`jolt_pat_…`) lets your own code act for you —
+jolt you when a build fails, or poke a friend from a home automation. Mint one
+under **Dashboard → API tokens** (or at `POST /api/v1/me/tokens`, with a
+session) and paste it into whatever you are wiring up. A token is never
+editable: to change what it may do, mint another and revoke the old one.
+
+Only the sha256 of a token is stored, so the secret is returned exactly once,
+at creation, and a lost one is replaced rather than looked up. The dashboard
+page shows the secret once, with ready-made curl lines for what it may do, and
+lists every token with its scopes, friends, limits and when it was last used,
+so a forgotten integration is visible rather than merely remembered.
+
+### Scopes
+
+Each token says what it may do. `scopes` is required when minting:
+
+| Scope | Unlocks |
+|---|---|
+| `stimulus:self` | `POST /me/stimulus` — fire at your own devices |
+| `pokes:send` | `POST /pokes` — poke friends, within what each allows you |
+| `friends:read` | `GET /friends` |
+| `pokes:read` | `GET /pokes` |
+| `*` | every scope, including any added later |
+
+`GET /me` works with any valid token. A token missing the scope an endpoint
+needs gets `403 This token lacks the "pokes:send" scope.` Everything else —
+minting, listing and revoking tokens, devices, friend requests, editing
+permissions, acks — is session-only, whatever the scopes; a token there is a
+**403, not a 401**, so an integrator is told the token is fine and the
+endpoint is not. A token that could mint another would survive its own
+revocation. Tokens minted before scopes existed were migrated to
+`stimulus:self`, which is all they could ever do.
+
+### Which friends
+
+By default a token reaches every friend, including ones added later. Send
+`friendIds` when minting and it reaches only those (`friendScope:
+"selected"`). Each must be a current friend. Unfriending someone removes them
+from every token on both sides — and re-friending does not put them back — so
+a `selected` token whose list has emptied reaches **nobody**, never
+everybody. Such a token sees only its friends in `GET /friends`, and only
+pokes with them in `GET /pokes`. A token's `GET /pokes` includes your own
+self-stimuli only if it may fire them (`stimulus:self` or `*`).
+
+```bash
+curl -X POST https://jolt.example/api/v1/pokes \
+  -H "Authorization: Bearer jolt_pat_…" \
+  -H "Content-Type: application/json" \
+  -d '{"friendId":"<their id from GET /friends>","stimulus":{"kind":"vibe","intensity":20,"repetitions":1}}'
+```
+
+### Limits
+
+A token can also be minted with limits on what it fires, at you or at a
+friend: `allowedKinds` (default every kind), `maxIntensity` (default: only the
+recipient's cap) and `minIntervalSeconds` (default 1, at least 1, at most a
+day). They narrow the recipient's grant, never widen it — the lower cap wins,
+and both the token's interval and the friend's cooldown must have passed. The
+interval is claimed with one conditional `UPDATE` on `api_token.last_fired_at`
+as the last check before the poke is recorded, so it holds across instances
+and restarts, a burst lands exactly once (`429`, with how long to wait), and a
+poke refused for any other reason costs no slot. A retried `pokeId` is still
+answered before any of it.
+
+### What the other side sees
+
+A poke sent with a token is recorded as such (`poke_event.source =
+'api_token'`). Both ends see `viaApiToken: true` in `PokeEvent`; the sender
+also sees `apiTokenName`, the recipient never does. The push carries
+`viaApiToken` too, and its alert ends in `(automation)`. Server logs name the
+token by id prefix and name.
+
+### Self-stimulus
+
 `POST /api/v1/me/stimulus` fires a stimulus at your own devices. No friend and
 no permission grant, because the only person in the request is the one holding
-the credential — which can be a **personal access token**, minted under
-**Dashboard → API tokens** (or at `POST /api/v1/me/tokens`) and pasted into
-whatever you are wiring up:
+the credential:
 
 ```bash
 curl -X POST https://jolt.example/api/v1/me/stimulus \
@@ -136,16 +208,6 @@ The body is **strict**: an unknown field is a 400. It differs from
 `POST /pokes` by one field, and a caller that means to poke a friend but posts
 `{ friendId, stimulus }` here would otherwise have `friendId` stripped and be
 told 201 — for a stimulus fired at itself.
-
-Only the sha256 of a token is stored, so the secret is returned exactly once,
-at creation, and a lost one is replaced rather than looked up. A token reaches
-`GET /me` and `POST /me/stimulus` and nothing else — anywhere else it is a
-**403, not a 401**, so an integrator is told the token is fine and the endpoint
-is not. Minting, listing and revoking are session-only: a token that could
-mint another would survive its own revocation. The dashboard page shows the
-secret once, with a ready-made curl line, and lists every token with when it
-was last used so a forgotten integration is visible rather than merely
-remembered.
 
 The stimulus is recorded as a `poke_event` from you to you, so it appears in
 your activity feed and acks through `POST /pokes/{id}/ack` like any other poke,
@@ -163,6 +225,29 @@ friend request seeds all six rows (3 stimuli x 2 directions) disabled.
 
 The composer clamps intensity client-side for UX only. The server re-checks
 permission, cap and cooldown on every send and is authoritative.
+
+### Automated pokes
+
+Allowing a friend a stimulus does not by itself allow their *scripts*. Each
+grant also has `automationAllowed`: `true`, `false`, or `null` for "no answer
+yet", which follows the server policy — allowed, unless the operator requires
+consent (`Me.policies.automationConsentRequired`). An explicit answer always
+wins and is never rewritten by a policy change. Only pokes sent with a token
+are subject to it; a refused one is `403 They haven't allowed automated pokes
+of that stimulus.`
+
+It is set through the same `PUT /friends/{id}/permissions/{kind}`, with one
+difference from the other three keys: an **absent** `automationAllowed`
+leaves the stored answer unchanged — apps built before it send only the three
+as a full overwrite and must not wipe it — while `null` resets it to the
+default. Responses carry both `automationAllowed` and
+`automationAllowedEffective`. The web dashboard has a Default/Allow/Block
+control per friend and stimulus.
+
+The policy is the `AUTOMATION_CONSENT_REQUIRED` environment variable when set
+(then shown locked), otherwise an admin's choice at **/admin/settings**,
+otherwise "not required". Before requiring consent, that page says how many
+allowed-but-unanswered grants will start refusing automated pokes.
 
 ## No discovery, by design
 
