@@ -165,13 +165,17 @@ describe("pushConfig", () => {
     );
   });
 
-  it("still answers when the relay cannot be reached", async () => {
+  it.each([
+    ["cannot be reached", () => Promise.reject(new TypeError("fetch failed"))],
+    ["fails", async () => Response.json({ error: "internal" }, { status: 500 })],
+    ["has blocked this server", async () => Response.json({ error: "server_blocked" }, { status: 403 })],
+  ])("answers 503 rather than relay when the relay %s", async (_label, reply) => {
     Object.assign(mocked.pushRouting, { transport: "relay", relayUrl: "https://relay.example/" });
-    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
+    fetchMock.mockImplementationOnce(reply);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const { pushConfig } = await import("#/push");
 
-    expect((await pushConfig()).transport).toBe("relay");
+    await expect(pushConfig()).rejects.toMatchObject({ status: 503 });
   });
 
   it("names the APNs environment for a server with its own credentials", async () => {

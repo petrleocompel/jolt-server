@@ -328,15 +328,24 @@ paths:
 
         The relay protocol itself is specified in the jolt-relay repository
         (`spec/protocol-v1.md`). An app only registers with relay hosts it has
-        built in, whatever URL a server names here. For `relay`, the server
-        has registered itself with the relay by the time this answers, when
-        the relay can be reached at all.
+        built in, whatever URL a server names here. The server only answers
+        `relay` once the relay has accepted its registration, so a device
+        registration never meets `unknown_server`.
       responses:
         '200':
           description: OK
           content:
             application/json:
               schema: { $ref: '#/components/schemas/PushConfig' }
+        '503':
+          description: >
+            The server delivers through the relay, but the relay has not
+            accepted its registration: it cannot be reached, it failed, or it
+            has blocked this server. Keep the current push registration and
+            ask again later.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /devices/push-token:
     post:
