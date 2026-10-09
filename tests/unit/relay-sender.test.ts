@@ -324,6 +324,13 @@ describe("RelayPushSender", () => {
     expect(relay.calls[1]!.body.messages).toHaveLength(1);
   });
 
+  it("rejects an envelope over 3072 bytes without sending it", async () => {
+    const huge = { ...poke, senderDisplayName: "A".repeat(3000) };
+    const [result] = await new RelayPushSender(makeClient()).sendPoke(relayTargets(1), huge);
+    expect(result).toMatchObject({ ok: false, reason: "rejected" });
+    expect(relay.calls.filter((c) => c.path === "/v1/send")).toEqual([]);
+  });
+
   it("shares one registration between concurrent sends", async () => {
     const sender = new RelayPushSender(makeClient());
     await Promise.all([sender.sendPoke(relayTargets(1), poke), sender.sendPoke(relayTargets(1), poke)]);

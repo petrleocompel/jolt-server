@@ -26,6 +26,9 @@ import type {
 /** The relay accepts at most this many messages per `/v1/send`. */
 export const RELAY_BATCH_SIZE = 100;
 
+/** The largest serialized envelope the relay accepts (protocol C15). */
+export const MAX_ENVELOPE_BYTES = 3072;
+
 /**
  * Same budget as the direct sender's `apns-expiration`: a poke is worthless
  * if it arrives an hour late, and a test push the user is watching for even
@@ -146,20 +149,26 @@ export class RelayPushSender implements PushSender {
         });
         continue;
       }
+      const envelope = sealEnvelope({
+        payloadKey: target.payloadKey,
+        serverId,
+        kind,
+        plaintext: plaintextFor(serverId, target),
+      });
+      // The relay would reject it anyway (protocol C15); refused here, one
+      // oversized payload cannot turn into a 413 for the whole batch.
+      if (Buffer.byteLength(JSON.stringify(envelope)) > MAX_ENVELOPE_BYTES) {
+        results.set(target.id, {
+          targetId: target.id,
+          ok: false,
+          reason: "rejected",
+          detail: `The sealed payload is larger than the relay's ${MAX_ENVELOPE_BYTES} bytes.`,
+        });
+        continue;
+      }
       sendable.push({
         target,
-        message: {
-          relayToken: target.token,
-          kind,
-          envelope: sealEnvelope({
-            payloadKey: target.payloadKey,
-            serverId,
-            kind,
-            plaintext: plaintextFor(serverId, target),
-          }),
-          ttlSeconds: TTL_SECONDS,
-          collapseId,
-        },
+        message: { relayToken: target.token, kind, envelope, ttlSeconds: TTL_SECONDS, collapseId },
       });
     }
 
