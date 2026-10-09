@@ -1,0 +1,48 @@
+{
+  "source": "Copied verbatim from jolt-relay spec/vectors/envelope-v1.json (protocol v1, jolt-relay commit fb9c1b7) apart from this key. The relay repository is canonical: update them there first, then copy them here again.",
+  "description": "AES-256-GCM. ct = ciphertext || 16-byte tag, base64url without padding. kid = base64url(SHA-256(key)[0..8]). AAD = UTF-8 'jolt-push-v1|{serverId}|{kind}'. plaintext is the exact UTF-8 bytes shown.",
+  "keyB64u": "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8",
+  "kid": "AOmIZ37s-Uw",
+  "cases": [
+    {
+      "name": "poke",
+      "kind": "poke",
+      "serverId": "srv_kzdvvj2umnduyauf35o36k6kw4",
+      "aad": "jolt-push-v1|srv_kzdvvj2umnduyauf35o36k6kw4|poke",
+      "plaintext": "{\"type\":\"poke\",\"poke\":{\"pokeID\":\"7d6f0c1e-2b3a-4c5d-8e9f-0a1b2c3d4e5f\",\"serverId\":\"srv_kzdvvj2umnduyauf35o36k6kw4\",\"senderHandle\":\"alice\",\"senderDisplayName\":\"Alice\",\"recipientHandle\":\"bob\",\"stimulus\":{\"kind\":\"zap\",\"intensity\":30,\"repetitions\":2},\"sentAt\":\"2026-10-09T12:32:00.000Z\",\"viaApiToken\":false}}",
+      "envelope": {
+        "v": 1,
+        "kid": "AOmIZ37s-Uw",
+        "n": "AAECAwQFBgcICQoL",
+        "ct": "Rc69Do13mM_sHiAi3sYUytLc338uWBb8NZcj_kAJhhR1tlZrraWZESRSbF0K4KWVaUTv85rIxhjwO5dItKS4Qv1VEmMrpopkWbc3mwflcURs_W85IIlybKeRbbavgoEnIMUb0R7AximXXObD8oJ6SKOSMBzW3-4hL8J_QI0QpJMZu3q1KQrv1dbTDrHrYuvOfVdKSE_br3EtsbGwULVuA_2zxbU8GKnFgoAiJM0q1-NidoI0y1SUcThuQPyju6oJlbijavnAVxR3ymasedL7TvMP30Znb1TIfcemJ9AZ9W8kd5Yxb7hzDXFjNx5186dwSWmK6UNkXf2Ue0YwxW6PEk00HugDwiC3T9y-YpOcbQ6dASDU_0PtHHWEDNhYWLY27Gh78bVOtkCZ3mdCKHmugVzmS8p7j9RjQ2JPHsA8uNA"
+      }
+    },
+    {
+      "name": "test-with-stimulus",
+      "kind": "test",
+      "serverId": "srv_kzdvvj2umnduyauf35o36k6kw4",
+      "aad": "jolt-push-v1|srv_kzdvvj2umnduyauf35o36k6kw4|test",
+      "plaintext": "{\"type\":\"test\",\"test\":{\"testID\":\"3c2b1a09-8765-4321-a0b1-c2d3e4f5a6b7\",\"deviceID\":\"9a8b7c6d-5e4f-4a3b-9c2d-1e0f9a8b7c6d\",\"serverId\":\"srv_kzdvvj2umnduyauf35o36k6kw4\",\"sentAt\":\"2026-10-09T12:33:00.000Z\",\"source\":\"app\",\"stimulus\":{\"kind\":\"vibe\",\"intensity\":50,\"repetitions\":1}}}",
+      "envelope": {
+        "v": 1,
+        "kid": "AOmIZ37s-Uw",
+        "n": "Dw4NDAsKCQgHBgUE",
+        "ct": "EP3YB1rTjrWV99aSsNqqb5MzZq7dLbD7NTU-wwLuOONHUDfA1vyXKGHvV5n4mUpyKAJSnvf4oouS3XFE1cF3J6vjWjM7nmXlP96okJLYk04G8lo4n5RsKfVFjCUzJ39n9OxKXykFEOLizTeJhEyf0kiwgrUp1_YSy5hmmRdLmgA3Q6LWsuDJOGuw_kgBAFDmqRK-U64Woc5tVyaoZ9r2GkgNwkNpSgxJGieoVPR8nhzIkP8MJ_FbeWB9sEXh-29AFg66KW3dHFyGYtDgfEkqw_3ghbfbNL_5CQZoV5d9AJHrMKto5JmkfzlLoLeIQxdzG7n5SFy9Z-Fxkcz3msSdWfv-AepEut6lDY6Cdz6aZ5leazYdDldk4NeDSuhQtkZTUSJH"
+      }
+    }
+  ],
+  "negative": [
+    {
+      "name": "wrong-kind-in-aad",
+      "envelopeOf": "poke",
+      "kind": "test",
+      "expect": "decrypt-fails"
+    },
+    {
+      "name": "wrong-server-in-aad",
+      "envelopeOf": "poke",
+      "serverId": "srv_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expect": "decrypt-fails"
+    }
+  ]
+}
