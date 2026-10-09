@@ -10,6 +10,7 @@ import {
 } from "#/push/relay-identity";
 import { RoutingPushSender } from "#/push/routing";
 import type { PushSender } from "#/push/types";
+import { ApiError } from "#/api/errors";
 import type { PushConfig } from "#/api/schemas";
 import { env, hasApnsCredentials, pushRouting } from "#/env";
 import { relayIdentitySeed } from "#/services/settings";
@@ -81,16 +82,24 @@ export function pushSender(): PushSender {
 /**
  * `GET /push/config`. For the relay, the server registers itself first: the
  * app's own registration names this server's id, and the relay refuses an id
- * it has never heard of. A relay that cannot be reached is logged rather
- * than reported — the app's registration will fail on its own, and retry.
+ * it has never heard of (protocol C2). So a registration that did not
+ * succeed — a relay that cannot be reached, a 5xx, or `server_blocked` — is
+ * a 503, never `relay`: the app keeps its current registration and asks
+ * again later, instead of spending its attempts at the relay on a device
+ * registration that cannot succeed.
  */
 export async function pushConfig(): Promise<PushConfig> {
   const client = relayClient();
   if (pushRouting.transport === "relay" && client) {
     const identity = await client.getIdentity();
-    await client
-      .ensureRegistered()
-      .catch((error: unknown) => console.warn("[push] relay registration failed", error));
+    try {
+      await client.ensureRegistered();
+    } catch (error) {
+      console.warn("[push] relay registration failed", error);
+      throw ApiError.unavailable(
+        "Push registration is unavailable: the push relay has not accepted this server.",
+      );
+    }
     return { transport: "relay", relay: { url: pushRouting.relayUrl!, serverId: identity.serverId } };
   }
   if (pushRouting.transport === "apns") {

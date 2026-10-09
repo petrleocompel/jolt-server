@@ -28,6 +28,9 @@ export class ApiError extends Error {
   static tooManyRequests(message: string) {
     return new ApiError(429, message);
   }
+  static unavailable(message: string) {
+    return new ApiError(503, message);
+  }
   static gone(message: string, code: string) {
     return new ApiError(410, message, code);
   }
