@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { parseBooleanish } from "#/lib/booleanish";
+import { parseIdentityKey } from "#/push/relay-identity";
 import { resolvePushRouting } from "#/push/routing";
 import "#/lib/zod-locale";
 
@@ -93,7 +94,21 @@ const envSchema = z.object({
    * what almost everyone wants — set it only to keep the same identity
    * across a database you rebuild from scratch.
    */
-  PUSH_RELAY_PRIVATE_KEY: optionalNonEmpty(z.string()),
+  PUSH_RELAY_PRIVATE_KEY: optionalNonEmpty(
+    z.string().refine(
+      (raw) => {
+        try {
+          parseIdentityKey(raw);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      // A key that does not parse must stop the server, not quietly become
+      // a different one with every device registered to the old id.
+      { message: "must be an Ed25519 PEM key or a base64 32-byte seed" },
+    ),
+  ),
   /** Opt-in: shown to the relay operator. Never sent unless set. */
   PUSH_RELAY_SERVER_NAME: optionalNonEmpty(z.string().max(80)),
   /** Opt-in: this server's public URL, for the relay operator. Never sent unless set. */
