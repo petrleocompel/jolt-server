@@ -7,6 +7,7 @@ import { db } from "#/db";
 import { deviceToken, friendPermission, pokeEvent, user as userTable } from "#/db/schema";
 import { StimulusConfig } from "#/api/schemas";
 import { requireAdminOrRedirect, requireUserOrRedirect } from "#/server/session.server";
+import { listAllDevices } from "#/services/devices";
 import { statusBreakdown } from "#/services/pokes";
 import { sendTestPush } from "#/services/push-test";
 import { pushRouting } from "#/env";
@@ -101,28 +102,7 @@ export const fetchAllPokes = createServerFn({ method: "GET" }).handler(async () 
 
 export const fetchAllDevices = createServerFn({ method: "GET" }).handler(async () => {
   await requireAdminOrRedirect();
-  const rows = await db
-    .select({
-      id: deviceToken.id,
-      token: deviceToken.token,
-      platform: deviceToken.platform,
-      transport: deviceToken.transport,
-      createdAt: deviceToken.createdAt,
-      lastSeenAt: deviceToken.lastSeenAt,
-      disabledAt: deviceToken.disabledAt,
-      handle: userTable.handle,
-      userId: deviceToken.userId,
-    })
-    .from(deviceToken)
-    .innerJoin(userTable, eq(userTable.id, deviceToken.userId))
-    .orderBy(desc(deviceToken.lastSeenAt))
-    .limit(200);
-  return rows.map((r) => ({
-    ...r,
-    createdAt: r.createdAt.toISOString(),
-    lastSeenAt: r.lastSeenAt.toISOString(),
-    disabledAt: r.disabledAt?.toISOString() ?? null,
-  }));
+  return listAllDevices();
 });
 
 /**

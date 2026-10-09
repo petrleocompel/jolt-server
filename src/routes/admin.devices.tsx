@@ -78,7 +78,7 @@ function AdminDevices() {
                 <TableRow key={device.id}>
                   <TableCell>@{device.handle}</TableCell>
                   <TableCell className="font-mono text-xs">
-                    {device.token.slice(0, 16)}…
+                    …{device.tokenSuffix}
                   </TableCell>
                   <TableCell>
                     {device.platform} · {device.transport}
