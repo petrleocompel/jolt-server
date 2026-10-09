@@ -81,16 +81,32 @@ See the [configuration reference](/jolt-server/self-hosting/configuration/).
 
 ## Pokes are recorded but never reach a backgrounded phone
 
-APNs is not configured, or not reaching the container. The admin dashboard
-shows "APNs is not configured" and the logs contain `[push]` lines from the
-console sender. Set all three of `APNS_KEY_ID`, `APNS_TEAM_ID` and
-`APNS_KEY_P8`, then `docker compose up -d`. See
-[Push notifications](/jolt-server/self-hosting/push-notifications/).
+Push is not configured, or not reaching the container. The admin dashboard
+shows "Push is not configured" and the logs contain `[push]` lines from the
+console sender. Set `PUSH_RELAY_URL`, or, for your own app build, all three of
+`APNS_KEY_ID`, `APNS_TEAM_ID` and `APNS_KEY_P8`, then `docker compose up -d`.
+See [Push notifications](/jolt-server/self-hosting/push-notifications/).
+
+## Pushes through the relay fail
+
+Open the admin overview (`/admin`). Under **Push delivery** it shows whether
+the relay has accepted this server and the last error the relay returned:
+
+- **registration failed**, with a network error: the server cannot reach
+  `PUSH_RELAY_URL`. Check the URL and the container's outbound network.
+- **blocked by the relay**: the relay operator has blocked this server.
+- `unregistered` results on the devices page: the app was removed or signed
+  out, or registered for a different server. The app registers again when it
+  starts.
+- A `rejected` result saying the payload key cannot be read: `BETTER_AUTH_SECRET`
+  changed since the device registered. It recovers once the app starts again.
 
 ## The test push stays on "waiting for the device"
 
-The push left the server but never arrived. Usually `APNS_ENV` disagrees with
-the build on the phone (a debug build from Xcode is `sandbox`; TestFlight and
-the App Store are `production`), or `APNS_BUNDLE_ID` does not match the build.
-Remember that APNs keys only work for a build signed by the same Apple team.
+The push left the server but never arrived. With your own APNs key, usually
+`APNS_ENV` disagrees with the build on the phone (a debug build from Xcode is
+`sandbox`; TestFlight and the App Store are `production`), or `APNS_BUNDLE_ID`
+does not match the build. Remember that APNs keys only work for a build signed
+by the same Apple team. Through the relay, check that notifications are
+allowed for the app on the phone.
 See [Testing push delivery](/jolt-server/guides/push-testing/).

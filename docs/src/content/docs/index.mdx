@@ -37,9 +37,10 @@ publicly available yet.
 		cooldown, set by the person receiving them and re-checked by the server on
 		every poke.
 	</Card>
-	<Card title="APNs alert and silent push" icon="phone">
+	<Card title="Alert and silent push" icon="phone">
 		Every poke sends an alert push so the recipient finds out, plus a silent
-		push that can fire the stimulus without anyone touching the phone.
+		push that can fire the stimulus without anyone touching the phone. Through
+		the end-to-end encrypted push relay, or your own APNs key.
 	</Card>
 	<Card title="Personal access tokens" icon="setting">
 		Scripts and home automations can act for you with `jolt_pat_` tokens limited
@@ -51,7 +52,7 @@ publicly available yet.
 	</Card>
 	<Card title="Admin dashboard" icon="analytics">
 		Users, devices, all pokes with a delivery-status breakdown, and server
-		settings, plus a clear warning when APNs is not configured.
+		settings, plus how pushes are delivered and a clear warning when they are not.
 	</Card>
 	<Card title="Self-host in one command" icon="rocket">
 		One `compose.yaml` runs Postgres, migrations, the API, the hourly cleanup

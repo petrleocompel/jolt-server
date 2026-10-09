@@ -19,8 +19,10 @@ docker compose exec -T db pg_dump -U jolt jolt | gzip > jolt-$(date +%F).sql.gz
 ```
 
 Also keep a copy of `.env`. It holds `BETTER_AUTH_SECRET`, without which every
-existing session is invalid, and your APNs key if you configured one. Store it
-somewhere private: it contains secrets.
+existing session is invalid and relay pushes stop until each app registers
+again, and your APNs key if you configured one. Store it somewhere private: it
+contains secrets. The server's push relay identity is in the database, so the
+dump above keeps it.
 
 ## Restore
 
