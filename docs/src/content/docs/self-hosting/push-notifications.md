@@ -100,7 +100,11 @@ re-registers with a new key.
 
 - **Unregistered.** The device's registration is gone: the app was removed,
   the user signed out, or the registration belongs to a different server. The
-  device is disabled immediately, exactly like a dead APNs token.
+  device is disabled immediately, like a dead APNs token, and stays disabled:
+  if the app posts the same relay token again, the server answers
+  `410 relay_token_revoked`, and the app registers with the relay afresh and
+  posts the new token. Unlike an APNs token, a revoked relay token is never
+  re-enabled.
 - **Blocked.** The relay operator has blocked this server. The admin overview
   shows the registration as "blocked by the relay", and every push fails
   until the block is lifted.

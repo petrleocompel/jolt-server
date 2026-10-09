@@ -96,8 +96,9 @@ the relay has accepted this server and the last error the relay returned:
   `PUSH_RELAY_URL`. Check the URL and the container's outbound network.
 - **blocked by the relay**: the relay operator has blocked this server.
 - `unregistered` results on the devices page: the app was removed or signed
-  out, or registered for a different server. The app registers again when it
-  starts.
+  out, or registered for a different server. The device stays disabled; when
+  the app next starts and posts its old relay token, the server answers `410`
+  and the app registers with the relay again under a new token.
 - A `rejected` result saying the payload key cannot be read: `BETTER_AUTH_SECRET`
   changed since the device registered. It recovers once the app starts again.
 

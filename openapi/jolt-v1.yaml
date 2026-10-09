@@ -357,6 +357,14 @@ paths:
         that key's `keyId`; a `keyId` that is not derived from `payloadKey`
         is refused with 400. Registering the same token again moves it to the
         caller and replaces the key.
+
+
+        A relay token the relay has reported `unregistered` stays disabled:
+        posting it again gets `410` with `error: relay_token_revoked`, and the
+        device is not re-enabled. The app then discards that `relayToken` and
+        its `payloadKey`, registers with the relay again, and posts the new
+        token. A disabled APNs token, by contrast, is re-enabled by
+        registering it again.
       requestBody:
         required: true
         content:
@@ -372,6 +380,17 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '410':
+          description: >
+            The relay has revoked this `relayToken` (`error:
+            relay_token_revoked`). Register with the relay again and post the
+            new token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                message: The relay has revoked this registration. Register with the relay again.
+                error: relay_token_revoked
     delete:
       tags: [devices]
       summary: Forget this device's push registration on sign-out
@@ -387,7 +406,10 @@ paths:
         alone, and the response is 204 either way. Send the token the device
         registered with: `token` for APNs, `relayToken` for the relay. The
         relay registration itself is the app's to revoke, with
-        `DELETE /v1/devices/{relayToken}` at the relay.
+        `POST /v1/devices/unregister` at the relay; the server never revokes
+        it. Whenever the app replaces a registration (switching transport,
+        getting a new `relayToken`, switching server) it removes the old one
+        here as well, or the phone gets every poke twice.
       requestBody:
         required: true
         content:
@@ -1129,11 +1151,10 @@ components:
         serverId:
           type: string
           description: >
-            The relay `serverId` of the server that sent the poke. Present on
-            every push delivered through the relay, where this object travels
-            inside the encrypted envelope: the app must check it equals the
-            envelope's outer `srv` and drop the push if it does not. Direct
-            APNs pushes leave it out.
+            The relay `serverId` of the server that sent the poke. Required
+            inside every relay envelope, where the app must check it equals
+            the envelope's outer `srv` and drop the push if it does not. May
+            be absent in direct APNs pushes.
       example:
         aps:
           alert:
@@ -1276,7 +1297,7 @@ components:
           description: Absent for a notification-only test.
         serverId:
           type: string
-          description: As on `PokePushPayload`. Present on pushes delivered through the relay.
+          description: As on `PokePushPayload`. Required inside relay envelopes; may be absent in direct APNs pushes.
       example:
         aps:
           alert:
@@ -1449,3 +1470,10 @@ components:
       required: [message]
       properties:
         message: { type: string }
+        error:
+          type: string
+          description: >
+            A stable machine-readable code, present only on the answers a
+            client is expected to act on: `relay_token_revoked` (410 from
+            `POST /devices/push-token`). `message` is for people and may
+            change.

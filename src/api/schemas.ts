@@ -321,7 +321,11 @@ export const ApiToken = z.object({
 /** The one response that carries the secret. Store it now or mint a new one. */
 export const ApiTokenCreated = ApiToken.extend({ token: z.string() });
 
-export const ApiError = z.object({ message: z.string() });
+/**
+ * `error` is a stable code, present only where a client is expected to act
+ * on it (`relay_token_revoked`); `message` is for people.
+ */
+export const ApiError = z.object({ message: z.string(), error: z.string().optional() });
 
 // --- Request bodies ---------------------------------------------------------
 
