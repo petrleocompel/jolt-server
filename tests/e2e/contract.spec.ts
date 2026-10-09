@@ -216,6 +216,108 @@ test("full poke lifecycle", async ({ request }) => {
 });
 
 
+test("devices register for pushes directly or through the relay", async ({ request }) => {
+  const frank = await signup(request, `frank${unique()}`);
+  const relayToken = `rt_${unique().padEnd(43, "A").slice(0, 43)}`;
+  // The key and kid from the relay protocol's envelope vectors.
+  const relayBody = {
+    transport: "relay",
+    platform: "android",
+    relayToken,
+    payloadKey: "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8",
+    keyId: "AOmIZ37s-Uw",
+  };
+
+  await test.step("push config needs a session and names a transport", async () => {
+    expect((await request.get(`${API}/push/config`)).status()).toBe(401);
+    const response = await request.get(`${API}/push/config`, { headers: auth(frank.token) });
+    expect(response.status()).toBe(200);
+    expect(["apns", "relay", "none"]).toContain((await response.json()).transport);
+  });
+
+  await test.step("a kid that is not derived from the key is a 400", async () => {
+    const response = await request.post(`${API}/devices/push-token`, {
+      headers: auth(frank.token),
+      data: { ...relayBody, keyId: "AAAAAAAAAAA" },
+    });
+    expect(response.status()).toBe(400);
+  });
+
+  await test.step("a relay registration is listed as one, and forgotten by its token", async () => {
+    const registered = await request.post(`${API}/devices/push-token`, {
+      headers: auth(frank.token),
+      data: relayBody,
+    });
+    expect(registered.status()).toBe(204);
+
+    const listed = await (await request.get(`${API}/devices`, { headers: auth(frank.token) })).json();
+    expect(listed).toEqual([
+      expect.objectContaining({
+        platform: "android",
+        transport: "relay",
+        tokenSuffix: relayToken.slice(-8),
+        isActive: true,
+      }),
+    ]);
+
+    const forgotten = await request.delete(`${API}/devices/push-token`, {
+      headers: auth(frank.token),
+      data: { relayToken },
+    });
+    expect(forgotten.status()).toBe(204);
+    expect(await (await request.get(`${API}/devices`, { headers: auth(frank.token) })).json()).toEqual(
+      [],
+    );
+  });
+
+  await test.step("a relay token the relay revoked is a 410, and stays disabled", async () => {
+    const revokedToken = `rt_${`${unique()}${unique()}`.padEnd(43, "R").slice(0, 43)}`;
+    const body = { ...relayBody, relayToken: revokedToken };
+    expect(
+      (await request.post(`${API}/devices/push-token`, { headers: auth(frank.token), data: body })).status(),
+    ).toBe(204);
+
+    // What a relay `unregistered` result does to the row. There is no relay
+    // in the e2e stack, so the test writes it directly.
+    const sql = postgres(
+      process.env.E2E_DATABASE_URL ?? "postgres://jolt:jolt@127.0.0.1:5433/jolt_e2e",
+      { max: 1 },
+    );
+    try {
+      await sql`update device_token set disabled_at = now() where token = ${revokedToken}`;
+    } finally {
+      await sql.end();
+    }
+
+    const again = await request.post(`${API}/devices/push-token`, {
+      headers: auth(frank.token),
+      data: body,
+    });
+    expect(again.status()).toBe(410);
+    expect(await again.json()).toMatchObject({ error: "relay_token_revoked" });
+
+    const listed = await (await request.get(`${API}/devices`, { headers: auth(frank.token) })).json();
+    expect(listed).toEqual([
+      expect.objectContaining({ tokenSuffix: revokedToken.slice(-8), isActive: false }),
+    ]);
+    await request.delete(`${API}/devices/push-token`, {
+      headers: auth(frank.token),
+      data: { relayToken: revokedToken },
+    });
+  });
+
+  await test.step("the original APNs shape still registers, as apns", async () => {
+    const token = `e2e${unique()}${unique()}`;
+    const registered = await request.post(`${API}/devices/push-token`, {
+      headers: auth(frank.token),
+      data: { token, platform: "ios" },
+    });
+    expect(registered.status()).toBe(204);
+    const [device] = await (await request.get(`${API}/devices`, { headers: auth(frank.token) })).json();
+    expect(device).toMatchObject({ platform: "ios", transport: "apns" });
+  });
+});
+
 test("logout invalidates the token", async ({ request }) => {
   const user = await signup(request, `carol${unique()}`);
 

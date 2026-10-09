@@ -37,6 +37,12 @@ excludes both.
 | [`APNS_KEY_P8`](#apns_key_id-apns_team_id-apns_key_p8)         | No                   | empty                       | Server                            |
 | [`APNS_BUNDLE_ID`](#apns_bundle_id)                            | No                   | `cz.peelco.jolt`            | Server                            |
 | [`APNS_ENV`](#apns_env)                                        | No                   | see entry                   | Server                            |
+| [`PUSH_RELAY_URL`](#push_relay_url)                            | No                   | none                        | Server                            |
+| [`PUSH_RELAY_ENABLED`](#push_relay_enabled)                    | No                   | unset (automatic)           | Server                            |
+| [`PUSH_RELAY_SERVER_NAME`](#push_relay_server_name-push_relay_public_url) | No        | none                        | Server                            |
+| [`PUSH_RELAY_PUBLIC_URL`](#push_relay_server_name-push_relay_public_url)  | No        | none                        | Server                            |
+| [`PUSH_RELAY_IDENTITY_SECRET`](#push_relay_identity_secret)    | With the relay, in production | none               | Server                            |
+| [`PUSH_RELAY_PRIVATE_KEY`](#push_relay_private_key)            | No                   | generated, in the database  | Server                            |
 | [`PUSH_TIME_ZONE`](#push_time_zone)                            | No                   | `UTC`                       | Server                            |
 | [`SENTRY_DSN`](#sentry_dsn)                                    | No                   | empty                       | Server                            |
 | [`AUTOMATION_CONSENT_REQUIRED`](#automation_consent_required)  | No                   | unset                       | Server                            |
@@ -46,6 +52,7 @@ excludes both.
 | [`ADMIN_NAME`, `ADMIN_HANDLE`](#admin_name-admin_handle)       | No                   | `Admin`, `admin`            | `pnpm db:seed-admin`              |
 | [`JOLT_VERSION`](#jolt_version)                                | No                   | `latest`                    | Compose: image tag                |
 | [`JOLT_IMAGE`](#jolt_image)                                    | No                   | `jolt-server:local`         | `deploy/docker-compose.yml`       |
+| [`JOLT_SERVER_VERSION`](#jolt_server_version)                  | Set by the image     | `dev`                       | Server                            |
 | [`PORT`](#port)                                                | Set by Compose       | `3000`                      | Server                            |
 
 ### Only for development and seeding
@@ -103,7 +110,11 @@ characters. Generate one with:
 openssl rand -base64 48
 ```
 
-Changing it logs everyone out.
+Changing it logs everyone out. On a server that uses the
+[push relay](/jolt-server/self-hosting/push-notifications/#the-push-relay), it
+also makes the stored payload keys unreadable, since they are encrypted with a
+key derived from this secret: relay pushes fail until each app starts again
+and re-registers, which it does by itself.
 
 ### `BETTER_AUTH_URL`
 
@@ -181,8 +192,8 @@ it if that port is taken on your machine.
 sets `production` in the containers. It decides:
 
 - whether loopback aliases are trusted for sign-in (not in `production`);
-- whether a missing APNs configuration is logged as a warning at startup (only
-  in `production`);
+- whether a server with neither APNs credentials nor a push relay is logged as
+  a warning at startup (only in `production`);
 - the Sentry environment name and trace sample rate (10% in `production`, all
   traces otherwise).
 
@@ -194,7 +205,104 @@ to `3000`; it is not read from `.env`. The image exposes port 3000.
 ## Push notifications
 
 See [Push notifications](/jolt-server/self-hosting/push-notifications/) for
-how to get these values from Apple.
+how the two ways of delivering pushes compare, and how to get APNs
+credentials from Apple.
+
+Which way the server delivers is decided at startup:
+
+| APNs credentials | `PUSH_RELAY_URL` | `PUSH_RELAY_ENABLED` | Apps register with | Devices already on the relay |
+| --- | --- | --- | --- | --- |
+| no  | no  | unset or `false` | nothing (console sender) | console sender |
+| no  | set | unset or `true`  | the relay                | the relay |
+| yes | no  | unset or `false` | APNs, directly           | console sender |
+| yes | set | unset            | APNs, directly           | the relay |
+| yes | set | `true`           | the relay                | the relay |
+| any | set | `false`          | APNs, or nothing         | console sender |
+
+`PUSH_RELAY_ENABLED=true` without a relay URL stops the server from starting.
+
+### `PUSH_RELAY_URL`
+
+The base URL of the Jolt push relay, for example `https://relay.example/`.
+There is no public relay yet, so there is no default: until it has an address,
+the relay is only used when you set this. With a URL and no APNs credentials,
+the server uses the relay on its own.
+
+```dotenv
+PUSH_RELAY_URL=https://relay.example/
+```
+
+### `PUSH_RELAY_ENABLED`
+
+Optional. Unset or empty: the relay is used when there are no APNs
+credentials and a relay URL is known. `true`: apps are told to register with
+the relay even if APNs credentials are set. `false`: the server never contacts
+the relay, and devices registered with it get the console sender. Accepts
+`true`/`false`, `1`/`0`, `yes`/`no` or `on`/`off`; anything else stops the
+server from starting.
+
+### `PUSH_RELAY_SERVER_NAME`, `PUSH_RELAY_PUBLIC_URL`
+
+Optional, and **opt-in**: the relay only learns these if you set them. A name
+for your server (at most 80 characters) and its public `https` address, so the
+relay operator can recognise it. Without them the relay knows your server only
+by its key. See [Push relay privacy](/jolt-server/self-hosting/push-relay-privacy/).
+
+```dotenv
+PUSH_RELAY_SERVER_NAME=Our family server
+PUSH_RELAY_PUBLIC_URL=https://jolt.example.com
+```
+
+### `PUSH_RELAY_IDENTITY_SECRET`
+
+The secret the server seals its generated relay identity with before storing
+it in the database, so that a database dump or backup alone cannot sign as
+your server at the relay. At least 32 characters:
+
+```bash
+openssl rand -base64 48
+```
+
+- **Required in production** whenever the server may contact the relay (a
+  relay URL is known and `PUSH_RELAY_ENABLED` is not `false`), unless
+  [`PUSH_RELAY_PRIVATE_KEY`](#push_relay_private_key) is set. Without either,
+  the server refuses to start. Outside production it is optional, and the
+  identity is then stored unsealed.
+- **Never change it.** A different value cannot open the stored identity, and
+  the server refuses to replace it with a new one, since a new identity means
+  every phone has to register again. Keep it with the rest of `.env`; see
+  [Backup & restore](/jolt-server/self-hosting/backup-restore/).
+- It is deliberately separate from `BETTER_AUTH_SECRET`: rotating that one
+  logs everyone out but must not change your server's ID at the relay.
+
+**Upgrading a server that already uses the relay.** Servers from before this
+variable existed stored the identity unsealed. Set
+`PUSH_RELAY_IDENTITY_SECRET` and run `docker compose up -d`: the first time the
+server reads the stored identity, it seals it in place and logs
+`relay_identity sealed with PUSH_RELAY_IDENTITY_SECRET`. The server ID stays
+the same, so no phone has to register again. Backups taken before that still
+contain the unsealed identity; treat them as secret, or delete them once you
+have newer ones.
+
+### `PUSH_RELAY_PRIVATE_KEY`
+
+Optional. The server's Ed25519 identity at the relay. Unset, the server
+generates one the first time it needs it and keeps it in the database, sealed
+with [`PUSH_RELAY_IDENTITY_SECRET`](#push_relay_identity_secret), which is what
+almost everyone wants. Set it instead to keep the identity out of the database
+altogether, or the same across a database you rebuild from scratch: a new
+identity means every phone has to register again. With it set,
+`PUSH_RELAY_IDENTITY_SECRET` is not needed, and an identity already stored in
+the database is ignored; you can delete the `relay_identity` row from
+`server_setting`.
+
+It accepts a PKCS#8 PEM, on one line with literal `\n` or as is, or the raw
+32-byte seed in base64 or base64url. A value it cannot read stops the server
+from starting, rather than letting it silently become a different server.
+
+```bash
+openssl genpkey -algorithm ed25519
+```
 
 ### `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_P8`
 
@@ -301,6 +409,12 @@ Optional. The display name and `@handle` of a newly created admin. Defaults
 The tag of `ghcr.io/petrleocompel/jolt-server` that `compose.yaml` runs.
 Default `latest`. Set it to pin a release; see
 [Upgrading](/jolt-server/self-hosting/upgrading/).
+
+### `JOLT_SERVER_VERSION`
+
+The jolt-server version the server reports to the push relay when it
+registers. The published image sets it to the tag or branch it was built from;
+a local build reports `dev`. There is no reason to set it yourself.
 
 ### `JOLT_IMAGE`
 

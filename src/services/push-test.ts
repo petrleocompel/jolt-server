@@ -1,6 +1,6 @@
 import { ApiError } from "#/api/errors";
 import type { StimulusConfig, TestPushAck, TestPushStatus } from "#/api/schemas";
-import { hasApnsCredentials } from "#/env";
+import { pushRouting } from "#/env";
 import { pushSender } from "#/push";
 import { markUnregistered, targetsFor } from "#/services/devices";
 
@@ -107,7 +107,9 @@ export async function sendTestPush(options: SendTestPushOptions): Promise<TestPu
     sentAt,
     source: options.source,
     stimulus: options.stimulus,
-    apnsConfigured: hasApnsCredentials,
+    // Despite its name, what older clients read it as: "will this ever arrive?"
+    apnsConfigured: pushRouting.transport !== "none",
+    pushTransport: pushRouting.transport,
     devices: results.map((result) => ({
       deviceId: result.targetId,
       ok: result.ok,

@@ -22,12 +22,13 @@ Open **Dashboard → Devices**.
    | Row says                                                       | Meaning                                                                 |
    | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
    | delivered in 1.2s (notification tap / silent wake / banner in-app) | The device confirmed, and through which iOS entry point.           |
-   | APNs accepted it — waiting for the device…                     | Apple took it; no confirmation yet. The page waits 30 seconds.          |
+   | APNs (or the push relay) accepted it — waiting for the device… | Apple or the relay took it; no confirmation yet. The page waits 30 seconds. |
    | No confirmation. …                                             | Nothing came back in time.                                              |
-   | APNs rejected it — unregistered / transient / rejected         | Apple refused it. See below.                                            |
+   | APNs (or the push relay) rejected it — unregistered / transient / rejected | It was refused. See below.                                  |
 
-   If the card says the server has no Apple credentials, the push was only
-   logged to the server console and no device will confirm it.
+   If the card says the server has neither Apple credentials nor a push relay,
+   the push was only logged to the server console and no device will confirm
+   it.
 
 A locked phone usually confirms within a second or two. The silent half can
 take much longer, because iOS schedules background wakes at its own
@@ -47,13 +48,15 @@ to someone else's devices from **/admin/devices** (**Test push**).
   [Push notifications](/jolt-server/self-hosting/push-notifications/).
 - **No confirmation.** The app may not be installed, notifications may be off,
   or iOS throttled the push.
-- **APNs rejected it.** The reason is one of:
-  - `unregistered`: APNs answered `410`, or `400 BadDeviceToken`. The token is
-    dead; the server disables it and stops using it.
-  - `transient`: network trouble, `429` or a `5xx` from Apple. Worth retrying
-    later.
+- **APNs or the relay rejected it.** The reason is one of:
+  - `unregistered`: APNs answered `410`, or `400 BadDeviceToken`, or the relay
+    reported the registration gone. The token is dead; the server disables it
+    and stops using it.
+  - `transient`: network trouble, `429` or a `5xx` from Apple or the relay, or
+    a relay daily limit. Worth retrying later.
   - `rejected`: a misconfiguration such as a wrong topic (bundle ID), a bad
-    auth key or a malformed payload.
+    auth key or a malformed payload; a server the relay has blocked; or a
+    relay device whose payload key can no longer be read.
 
 ## Through the API
 

@@ -1,0 +1,7 @@
+{
+  "source": "Copied verbatim from jolt-relay spec/vectors/server-id.json (protocol v1, jolt-relay commit fb9c1b7) apart from this key. The relay repository is canonical: update them there first, then copy them here again.",
+  "description": "serverId = 'srv_' + lowercase RFC 4648 base32 (no padding) of the first 16 bytes of SHA-256(raw 32-byte Ed25519 public key).",
+  "ed25519SeedHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "publicKey": "A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg",
+  "serverId": "srv_kzdvvj2umnduyauf35o36k6kw4"
+}

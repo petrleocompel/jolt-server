@@ -39,7 +39,14 @@ export const friendRequestStatus = pgEnum("friend_request_status", [
   "rejected",
 ]);
 
-export const devicePlatform = pgEnum("device_platform", ["ios"]);
+export const devicePlatform = pgEnum("device_platform", ["ios", "android"]);
+
+/**
+ * How a device's pushes leave this server: straight to APNs with the
+ * server's own credentials, or through the Jolt push relay, which holds the
+ * credentials for the official app builds.
+ */
+export const pushTransport = pgEnum("push_transport", ["apns", "relay"]);
 
 /**
  * What sent a poke: the account holder in person (`app` — the iOS app or
@@ -244,14 +251,37 @@ export const deviceToken = pgTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    /**
+     * The APNs device token for `apns`, the `relayToken` the relay issued
+     * for `relay`. The two never collide: a relay token starts with `rt_`.
+     */
     token: text("token").notNull().unique(),
     platform: devicePlatform("platform").notNull().default("ios"),
+    transport: pushTransport("transport").notNull().default("apns"),
+    /**
+     * Relay only: the key the app decrypts this device's pushes with,
+     * sealed at rest under a key derived from BETTER_AUTH_SECRET (see
+     * src/push/payload-key.ts) — a database dump alone does not open them.
+     */
+    payloadKey: text("payload_key"),
+    /** Relay only: the payload key's `kid`, which every envelope names. */
+    keyId: text("key_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
-    /** Set when APNs returns 410 Unregistered. Culled later by cron. */
+    /**
+     * Set when APNs returns 410 Unregistered, or the relay reports the
+     * registration gone. Culled later by cron.
+     */
     disabledAt: timestamp("disabled_at", { withTimezone: true }),
   },
-  (t) => [index("device_token_user_idx").on(t.userId, t.disabledAt)],
+  (t) => [
+    index("device_token_user_idx").on(t.userId, t.disabledAt),
+    // A relay row without its key could never be delivered to.
+    check(
+      "device_token_relay_key",
+      sql`${t.transport} = 'apns' OR (${t.payloadKey} IS NOT NULL AND ${t.keyId} IS NOT NULL)`,
+    ),
+  ],
 );
 
 /**

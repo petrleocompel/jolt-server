@@ -18,7 +18,9 @@ vi.mock("#/services/devices", () => ({
 
 vi.mock("#/push", () => ({ pushSender: () => ({ sendTest }) }));
 
-vi.mock("#/env", () => ({ hasApnsCredentials: true }));
+const routing = vi.hoisted((): { transport: "apns" | "relay" | "none" } => ({ transport: "apns" }));
+
+vi.mock("#/env", () => ({ pushRouting: routing }));
 
 const { ackTestPush, resetPushTestStore, sendTestPush, testPushStatus } = await import(
   "#/services/push-test"
@@ -34,10 +36,11 @@ beforeEach(() => {
   markUnregistered.mockReset();
   markUnregistered.mockResolvedValue(undefined);
   sendTest.mockReset();
+  routing.transport = "apns";
 
   targetsFor.mockResolvedValue([
-    { id: "device-1", token: "aaa" },
-    { id: "device-2", token: "bbb" },
+    { id: "device-1", token: "aaa", transport: "apns" },
+    { id: "device-2", token: "bbb", transport: "apns" },
   ]);
   sendTest.mockResolvedValue([
     { targetId: "device-1", ok: true },
@@ -55,6 +58,18 @@ describe("sendTestPush", () => {
     ]);
     expect(status.acks).toEqual([]);
     expect(status.apnsConfigured).toBe(true);
+    expect(status.pushTransport).toBe("apns");
+  });
+
+  it("says how the server delivers, keeping apnsConfigured true for the relay", async () => {
+    routing.transport = "relay";
+    const relayed = await sendTestPush({ userId: ALICE, source: "web" });
+    expect(relayed).toMatchObject({ pushTransport: "relay", apnsConfigured: true });
+
+    resetPushTestStore();
+    routing.transport = "none";
+    const logged = await sendTestPush({ userId: ALICE, source: "web" });
+    expect(logged).toMatchObject({ pushTransport: "none", apnsConfigured: false });
   });
 
   it("passes the device filter and the stimulus straight through", async () => {

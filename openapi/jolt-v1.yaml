@@ -313,28 +313,96 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /push/config:
+    get:
+      tags: [devices]
+      summary: How this server wants the app to register for pushes
+      description: >
+        Read before registering for pushes. `apns`: the server has Apple
+        credentials of its own, and the app registers its APNs token directly
+        with `POST /devices/push-token`. `relay`: the server pushes through the
+        Jolt push relay, so the app registers with the relay at `relay.url`
+        for `relay.serverId` and then hands the server the relay's token and a
+        payload key. `none`: the server delivers no pushes; register nothing.
+
+
+        The relay protocol itself is specified in the jolt-relay repository
+        (`spec/protocol-v1.md`). An app only registers with relay hosts it has
+        built in, whatever URL a server names here. The server only answers
+        `relay` once the relay has accepted its registration, so a device
+        registration never meets `unknown_server`.
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PushConfig' }
+        '503':
+          description: >
+            The server delivers through the relay, but the relay has not
+            accepted its registration: it cannot be reached, it failed, or it
+            has blocked this server. Keep the current push registration and
+            ask again later.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /devices/push-token:
     post:
       tags: [devices]
-      summary: Register this device's APNs token for the signed-in account
+      summary: Register this device for pushes to the signed-in account
       description: >
-        Called once per launch after `application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`.
-        A user may have multiple registered devices; poke pushes fan out to all of them.
+        Called once per launch, after the app has its APNs token
+        (`application(_:didRegisterForRemoteNotificationsWithDeviceToken:)`)
+        or, for a server whose `GET /push/config` says `relay`, after it
+        has registered with the relay. A user may have multiple registered
+        devices; poke pushes fan out to all of them.
+
+
+        Two shapes. The original `{token, platform}` is an APNs registration;
+        a missing `transport` means `apns`, so app builds from before the
+        relay keep working. A relay registration carries the `relayToken` the
+        relay issued, the `payloadKey` the app decrypts its pushes with, and
+        that key's `keyId`; a `keyId` that is not derived from `payloadKey`
+        is refused with 400. Registering the same token again moves it to the
+        caller and replaces the key.
+
+
+        A relay token the relay has reported `unregistered` stays disabled:
+        posting it again gets `410` with `error: relay_token_revoked`, and the
+        device is not re-enabled. The app then discards that `relayToken` and
+        its `payloadKey`, registers with the relay again, and posts the new
+        token. A disabled APNs token, by contrast, is re-enabled by
+        registering it again.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [token, platform]
-              properties:
-                token: { type: string, description: Hex-encoded APNs device token }
-                platform: { type: string, enum: [ios] }
+              oneOf:
+                - $ref: '#/components/schemas/ApnsPushTokenRegistration'
+                - $ref: '#/components/schemas/RelayPushTokenRegistration'
       responses:
         '204': { description: Registered }
+        '400':
+          description: Neither shape, or a `keyId` that does not match `payloadKey`
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '410':
+          description: >
+            The relay has revoked this `relayToken` (`error:
+            relay_token_revoked`). Register with the relay again and post the
+            new token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example:
+                message: The relay has revoked this registration. Register with the relay again.
+                error: relay_token_revoked
     delete:
       tags: [devices]
-      summary: Forget this device's APNs token on sign-out
+      summary: Forget this device's push registration on sign-out
       description: >
         The other half of the POST. Without it the registration outlives the
         session: a phone that signed in as someone else and signed out again
@@ -344,16 +412,27 @@ paths:
 
 
         Scoped to the caller — a token registered to another account is left
-        alone, and the response is 204 either way.
+        alone, and the response is 204 either way. Send the token the device
+        registered with: `token` for APNs, `relayToken` for the relay. The
+        relay registration itself is the app's to revoke, with
+        `POST /v1/devices/unregister` at the relay; the server never revokes
+        it. Whenever the app replaces a registration (switching transport,
+        getting a new `relayToken`, switching server) it removes the old one
+        here as well, or the phone gets every poke twice.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [token]
-              properties:
-                token: { type: string, description: Hex-encoded APNs device token }
+              oneOf:
+                - type: object
+                  required: [token]
+                  properties:
+                    token: { type: string, description: Hex-encoded APNs device token }
+                - type: object
+                  required: [relayToken]
+                  properties:
+                    relayToken: { type: string, description: The relay token the device registered with }
       responses:
         '204': { description: Forgotten, or never registered here }
 
@@ -364,8 +443,9 @@ paths:
       description: >
         Backs the "test my notifications" screens — /dashboard/devices on the
         web and Settings → Notifications in the app. Only the last 8
-        characters of each APNs token are returned, which is enough for a
-        phone to recognise itself in the list and useless to anybody else.
+        characters of each APNs or relay token are returned, which is enough
+        for a phone to recognise itself in the list and useless to anybody
+        else.
       responses:
         '200':
           description: OK
@@ -1077,6 +1157,13 @@ components:
             " (automation)" when this is true; the flag is for clients that
             render their own text or badge. The token's name is never sent to
             the recipient.
+        serverId:
+          type: string
+          description: >
+            The relay `serverId` of the server that sent the poke. Required
+            inside every relay envelope, where the app must check it equals
+            the envelope's outer `srv` and drop the push if it does not. May
+            be absent in direct APNs pushes.
       example:
         aps:
           alert:
@@ -1093,18 +1180,32 @@ components:
           sentAt: '2026-09-21T14:32:00Z'
           viaApiToken: false
 
+    DevicePlatform:
+      type: string
+      enum: [ios, android]
+
+    PushTransport:
+      type: string
+      enum: [apns, relay]
+      description: >
+        How a registered device's pushes leave the server: straight to APNs
+        with the server's own credentials, or through the Jolt push relay.
+
     Device:
       type: object
-      required: [id, platform, tokenSuffix, isActive, createdAt, lastSeenAt]
+      required: [id, platform, transport, tokenSuffix, isActive, createdAt, lastSeenAt]
       properties:
         id: { type: string, format: uuid }
-        platform: { type: string, enum: [ios] }
+        platform: { $ref: '#/components/schemas/DevicePlatform' }
+        transport: { $ref: '#/components/schemas/PushTransport' }
         tokenSuffix:
           type: string
-          description: Last 8 characters of the APNs token, so a device can spot itself.
+          description: >
+            Last 8 characters of the APNs token (or of the relay token), so a
+            device can spot itself.
         isActive:
           type: boolean
-          description: False once APNs has reported the token unregistered.
+          description: False once APNs or the relay has reported the token unregistered.
         createdAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
 
@@ -1153,7 +1254,7 @@ components:
         Live state of one test push. Held in the server's memory for 10
         minutes rather than in the database — a test is only interesting while
         you are watching it.
-      required: [testID, sentAt, source, apnsConfigured, devices, acks]
+      required: [testID, sentAt, source, apnsConfigured, pushTransport, devices, acks]
       properties:
         testID: { type: string, format: uuid }
         sentAt: { type: string, format: date-time }
@@ -1162,8 +1263,16 @@ components:
         apnsConfigured:
           type: boolean
           description: >
-            False when the server has no Apple credentials and is logging to
-            the console instead of delivering. A test will never be acked.
+            False when the server delivers no pushes and is logging to the
+            console instead; a test will never be acked. True for a server
+            that delivers through the relay as well, despite the name. Kept
+            for clients that predate `pushTransport`, which says more.
+        pushTransport:
+          type: string
+          enum: [apns, relay, none]
+          description: >
+            How this server delivers pushes, as `GET /push/config` reports it:
+            its own APNs credentials, the push relay, or not at all.
         devices:
           type: array
           items: { $ref: '#/components/schemas/TestPushDeviceResult' }
@@ -1195,6 +1304,9 @@ components:
         stimulus:
           allOf: [{ $ref: '#/components/schemas/StimulusConfig' }]
           description: Absent for a notification-only test.
+        serverId:
+          type: string
+          description: As on `PokePushPayload`. Required inside relay envelopes; may be absent in direct APNs pushes.
       example:
         aps:
           alert:
@@ -1207,6 +1319,67 @@ components:
           deviceID: 3fa85f64-5717-4562-b3fc-2c963f66afa6
           sentAt: '2026-09-07T10:15:00Z'
           source: web
+
+    PushConfig:
+      type: object
+      required: [transport]
+      properties:
+        transport:
+          type: string
+          enum: [apns, relay, none]
+        apnsEnvironment:
+          type: string
+          enum: [sandbox, production]
+          description: Present only for `apns`.
+        relay:
+          type: object
+          description: Present only for `relay`.
+          required: [url, serverId]
+          properties:
+            url: { type: string, format: uri }
+            serverId:
+              type: string
+              description: This server's id at the relay, `srv_` and 26 base32 characters.
+      example:
+        transport: relay
+        relay:
+          url: https://relay.example/
+          serverId: srv_kzdvvj2umnduyauf35o36k6kw4
+
+    ApnsPushTokenRegistration:
+      type: object
+      description: >
+        A device the server pushes to directly with its own APNs credentials.
+        The only shape before the relay; `transport` is optional and means
+        `apns` when absent.
+      required: [token, platform]
+      properties:
+        transport: { type: string, enum: [apns] }
+        token: { type: string, description: Hex-encoded APNs device token }
+        platform: { type: string, enum: [ios] }
+
+    RelayPushTokenRegistration:
+      type: object
+      description: >
+        A device registered with the Jolt push relay. The server never sees
+        its APNs or FCM token: it pushes to `relayToken`, sealing each payload
+        with `payloadKey` so the relay cannot read it.
+      required: [transport, platform, relayToken, payloadKey, keyId]
+      properties:
+        transport: { type: string, enum: [relay] }
+        platform: { $ref: '#/components/schemas/DevicePlatform' }
+        relayToken:
+          type: string
+          pattern: '^rt_[A-Za-z0-9_-]{43}$'
+          description: Issued by the relay for this device and this server.
+        payloadKey:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: 32 random bytes, base64url without padding, generated by the app.
+        keyId:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{11}$'
+          description: base64url of the first 8 bytes of SHA-256(payloadKey).
 
     ApiTokenScope:
       type: string
@@ -1306,3 +1479,10 @@ components:
       required: [message]
       properties:
         message: { type: string }
+        error:
+          type: string
+          description: >
+            A stable machine-readable code, present only on the answers a
+            client is expected to act on: `relay_token_revoked` (410 from
+            `POST /devices/push-token`). `message` is for people and may
+            change.

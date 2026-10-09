@@ -236,6 +236,7 @@ function TestResult({ test, deadline }: { test: TestPushStatus; deadline: number
   // Recomputed on every poll, which is what makes the countdown move.
   const waiting = Date.now() < deadline;
   const accepted = test.devices.filter((device) => device.ok);
+  const transportName = test.pushTransport === "relay" ? "The push relay" : "APNs";
 
   return (
     <Card>
@@ -243,10 +244,10 @@ function TestResult({ test, deadline }: { test: TestPushStatus; deadline: number
         <CardTitle>Test {test.testID.slice(0, 8)}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
-        {!test.apnsConfigured && (
+        {test.pushTransport === "none" && (
           <p className="text-destructive">
-            This server has no Apple credentials, so the push was logged to the server console
-            instead of delivered. No device will confirm it.
+            This server has neither Apple credentials nor a push relay, so the push was logged to
+            the server console instead of delivered. No device will confirm it.
           </p>
         )}
 
@@ -259,7 +260,7 @@ function TestResult({ test, deadline }: { test: TestPushStatus; deadline: number
                 <span>
                   {!device.ok ? (
                     <span className="text-destructive">
-                      APNs rejected it — {device.reason}
+                      {transportName} rejected it — {device.reason}
                       {device.detail ? ` (${device.detail})` : ""}
                     </span>
                   ) : acks.length > 0 ? (
@@ -273,7 +274,7 @@ function TestResult({ test, deadline }: { test: TestPushStatus; deadline: number
                       .join(" · ")
                   ) : waiting ? (
                     <span className="text-muted-foreground">
-                      APNs accepted it — waiting for the device…
+                      {transportName} accepted it — waiting for the device…
                     </span>
                   ) : (
                     <span className="text-muted-foreground">

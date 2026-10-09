@@ -9,7 +9,7 @@ export const Route = createFileRoute("/api/v1/devices/push-token")({
       POST: handler(async (request) => {
         const me = await requireUser(request);
         const body = await parseBody(request, PushTokenBody);
-        await registerToken(me.id, body.token, body.platform);
+        await registerToken(me.id, body);
         return noContent();
       }),
       // Sign-out. Without it the row outlives the session, and the account
@@ -18,7 +18,7 @@ export const Route = createFileRoute("/api/v1/devices/push-token")({
       DELETE: handler(async (request) => {
         const me = await requireUser(request);
         const body = await parseBody(request, ForgetPushTokenBody);
-        await unregisterToken(me.id, body.token);
+        await unregisterToken(me.id, "token" in body ? body.token : body.relayToken);
         return noContent();
       }),
     },

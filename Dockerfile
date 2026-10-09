@@ -26,5 +26,10 @@ COPY --from=build /app/src ./src
 COPY --from=build /app/drizzle.config.ts ./
 COPY --from=build /app/tsconfig.json ./
 COPY package.json ./
+# Reported to the push relay when the server registers there. CI passes the
+# tag or branch the image was built from; a local build says "dev". Last, so
+# a new version does not invalidate the layers above.
+ARG JOLT_SERVER_VERSION=dev
+ENV JOLT_SERVER_VERSION=$JOLT_SERVER_VERSION
 EXPOSE 3000
 CMD ["node", ".output/server/index.mjs"]
