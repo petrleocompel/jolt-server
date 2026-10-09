@@ -243,10 +243,10 @@ function TestResult({ test, deadline }: { test: TestPushStatus; deadline: number
         <CardTitle>Test {test.testID.slice(0, 8)}</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3 text-sm">
-        {!test.apnsConfigured && (
+        {test.pushTransport === "none" && (
           <p className="text-destructive">
-            This server has no Apple credentials, so the push was logged to the server console
-            instead of delivered. No device will confirm it.
+            This server has neither Apple credentials nor a push relay, so the push was logged to
+            the server console instead of delivered. No device will confirm it.
           </p>
         )}
 

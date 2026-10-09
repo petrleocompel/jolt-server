@@ -9,7 +9,8 @@ import { StimulusConfig } from "#/api/schemas";
 import { requireAdminOrRedirect, requireUserOrRedirect } from "#/server/session.server";
 import { statusBreakdown } from "#/services/pokes";
 import { sendTestPush } from "#/services/push-test";
-import { hasApnsCredentials } from "#/env";
+import { pushRouting } from "#/env";
+import { relayClient } from "#/push";
 import { automationConsentPolicy, setAutomationConsentRequired } from "#/services/settings";
 
 /** Route guard for the /admin shell — redirects non-admins away. */
@@ -18,9 +19,23 @@ export const assertAdmin = createServerFn({ method: "GET" }).handler(async () =>
   return { handle: admin.handle };
 });
 
+/**
+ * How this server delivers pushes, for the admin overview. `console` is the
+ * stub: pokes are recorded and logged, and reach nobody. The relay's state is
+ * what this process has seen — registration happens on first use, so a
+ * freshly started server shows `unregistered` until a push or an app asks.
+ */
+async function pushOverview() {
+  const client = relayClient();
+  return {
+    mode: pushRouting.transport === "none" ? ("console" as const) : pushRouting.transport,
+    relay: client ? await client.status() : null,
+  };
+}
+
 export const fetchAdminOverview = createServerFn({ method: "GET" }).handler(async () => {
   await requireAdminOrRedirect();
-  const [[users], [devices], [pokes], breakdown] = await Promise.all([
+  const [[users], [devices], [pokes], breakdown, push] = await Promise.all([
     db.select({ n: sql<number>`count(*)::int` }).from(userTable),
     db
       .select({ n: sql<number>`count(*)::int` })
@@ -28,13 +43,14 @@ export const fetchAdminOverview = createServerFn({ method: "GET" }).handler(asyn
       .where(isNull(deviceToken.disabledAt)),
     db.select({ n: sql<number>`count(*)::int` }).from(pokeEvent),
     statusBreakdown(),
+    pushOverview(),
   ]);
   return {
     users: users?.n ?? 0,
     activeDevices: devices?.n ?? 0,
     pokes: pokes?.n ?? 0,
     breakdown,
-    apnsConfigured: hasApnsCredentials,
+    push,
   };
 });
 
@@ -90,6 +106,7 @@ export const fetchAllDevices = createServerFn({ method: "GET" }).handler(async (
       id: deviceToken.id,
       token: deviceToken.token,
       platform: deviceToken.platform,
+      transport: deviceToken.transport,
       createdAt: deviceToken.createdAt,
       lastSeenAt: deviceToken.lastSeenAt,
       disabledAt: deviceToken.disabledAt,

@@ -33,9 +33,11 @@ function AdminDevices() {
       });
       const accepted = result.devices.filter((device) => device.ok).length;
       setMessage(
-        (result.apnsConfigured
-          ? "Sent via APNs."
-          : "APNs not configured — logged by ConsolePushSender instead.") +
+        {
+          apns: "Sent via APNs.",
+          relay: "Sent through the push relay.",
+          none: "Push not configured — logged by ConsolePushSender instead.",
+        }[result.pushTransport] +
           ` Accepted for ${accepted} of ${result.devices.length} device(s).`,
       );
       await router.invalidate();
@@ -78,7 +80,9 @@ function AdminDevices() {
                   <TableCell className="font-mono text-xs">
                     {device.token.slice(0, 16)}…
                   </TableCell>
-                  <TableCell>{device.platform}</TableCell>
+                  <TableCell>
+                    {device.platform} · {device.transport}
+                  </TableCell>
                   <TableCell className="text-muted-foreground whitespace-nowrap">
                     {new Date(device.lastSeenAt).toLocaleString()}
                   </TableCell>
