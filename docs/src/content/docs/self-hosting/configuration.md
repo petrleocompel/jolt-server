@@ -41,6 +41,7 @@ excludes both.
 | [`PUSH_RELAY_ENABLED`](#push_relay_enabled)                    | No                   | unset (automatic)           | Server                            |
 | [`PUSH_RELAY_SERVER_NAME`](#push_relay_server_name-push_relay_public_url) | No        | none                        | Server                            |
 | [`PUSH_RELAY_PUBLIC_URL`](#push_relay_server_name-push_relay_public_url)  | No        | none                        | Server                            |
+| [`PUSH_RELAY_IDENTITY_SECRET`](#push_relay_identity_secret)    | With the relay, in production | none               | Server                            |
 | [`PUSH_RELAY_PRIVATE_KEY`](#push_relay_private_key)            | No                   | generated, in the database  | Server                            |
 | [`PUSH_TIME_ZONE`](#push_time_zone)                            | No                   | `UTC`                       | Server                            |
 | [`SENTRY_DSN`](#sentry_dsn)                                    | No                   | empty                       | Server                            |
@@ -252,13 +253,48 @@ PUSH_RELAY_SERVER_NAME=Our family server
 PUSH_RELAY_PUBLIC_URL=https://jolt.example.com
 ```
 
+### `PUSH_RELAY_IDENTITY_SECRET`
+
+The secret the server seals its generated relay identity with before storing
+it in the database, so that a database dump or backup alone cannot sign as
+your server at the relay. At least 32 characters:
+
+```bash
+openssl rand -base64 48
+```
+
+- **Required in production** whenever the server may contact the relay (a
+  relay URL is known and `PUSH_RELAY_ENABLED` is not `false`), unless
+  [`PUSH_RELAY_PRIVATE_KEY`](#push_relay_private_key) is set. Without either,
+  the server refuses to start. Outside production it is optional, and the
+  identity is then stored unsealed.
+- **Never change it.** A different value cannot open the stored identity, and
+  the server refuses to replace it with a new one, since a new identity means
+  every phone has to register again. Keep it with the rest of `.env`; see
+  [Backup & restore](/jolt-server/self-hosting/backup-restore/).
+- It is deliberately separate from `BETTER_AUTH_SECRET`: rotating that one
+  logs everyone out but must not change your server's ID at the relay.
+
+**Upgrading a server that already uses the relay.** Servers from before this
+variable existed stored the identity unsealed. Set
+`PUSH_RELAY_IDENTITY_SECRET` and run `docker compose up -d`: the first time the
+server reads the stored identity, it seals it in place and logs
+`relay_identity sealed with PUSH_RELAY_IDENTITY_SECRET`. The server ID stays
+the same, so no phone has to register again. Backups taken before that still
+contain the unsealed identity; treat them as secret, or delete them once you
+have newer ones.
+
 ### `PUSH_RELAY_PRIVATE_KEY`
 
 Optional. The server's Ed25519 identity at the relay. Unset, the server
-generates one the first time it needs it and keeps it in the database, which
-is what almost everyone wants. Set it only to keep the same identity across a
-database you rebuild from scratch: a new identity means every phone has to
-register again.
+generates one the first time it needs it and keeps it in the database, sealed
+with [`PUSH_RELAY_IDENTITY_SECRET`](#push_relay_identity_secret), which is what
+almost everyone wants. Set it instead to keep the identity out of the database
+altogether, or the same across a database you rebuild from scratch: a new
+identity means every phone has to register again. With it set,
+`PUSH_RELAY_IDENTITY_SECRET` is not needed, and an identity already stored in
+the database is ignored; you can delete the `relay_identity` row from
+`server_setting`.
 
 It accepts a PKCS#8 PEM, on one line with literal `\n` or as is, or the raw
 32-byte seed in base64 or base64url. A value it cannot read stops the server

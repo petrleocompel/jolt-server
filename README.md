@@ -86,6 +86,7 @@ likely to touch:
 | `PUBLIC_URL` | `https://$APP_HOST` | Public origin, if TLS ends elsewhere or you serve plain HTTP on a LAN |
 | `TRUSTED_ORIGINS` | none | Other origins browsers may sign in from, comma-separated |
 | `PUSH_RELAY_URL` | none (no public relay yet) | Push relay to deliver through, with no Apple credentials of your own |
+| `PUSH_RELAY_IDENTITY_SECRET` | none | Seals the server's relay identity in the database. Required with the relay in production |
 | `PUSH_RELAY_SERVER_NAME`, `PUSH_RELAY_PUBLIC_URL` | none | Opt-in: tell the relay operator who you are |
 | `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_P8` | none | APNs token auth, for your own app build. Set all three |
 | `APNS_BUNDLE_ID`, `APNS_ENV` | `cz.peelco.jolt`, `production` | Must match the app build on the phone |

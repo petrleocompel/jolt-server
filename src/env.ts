@@ -109,6 +109,14 @@ const envSchema = z.object({
       { message: "must be an Ed25519 PEM key or a base64 32-byte seed" },
     ),
   ),
+  /**
+   * Seals the generated relay identity in the database, so a dump of it
+   * alone cannot sign as this server. Deliberately not BETTER_AUTH_SECRET:
+   * rotating that must not change the serverId. Required in production when
+   * the relay is used and PUSH_RELAY_PRIVATE_KEY is not set; never rotated,
+   * since another value cannot open the stored identity.
+   */
+  PUSH_RELAY_IDENTITY_SECRET: optionalNonEmpty(z.string().min(32)),
   /** Opt-in: shown to the relay operator. Never sent unless set. */
   PUSH_RELAY_SERVER_NAME: optionalNonEmpty(z.string().max(80)),
   /** Opt-in: this server's public URL, for the relay operator. Never sent unless set. */
@@ -159,6 +167,21 @@ export const pushRouting = resolvePushRouting({
   relayEnabled: env.PUSH_RELAY_ENABLED,
   relayUrl: env.PUSH_RELAY_URL ?? DEFAULT_PUSH_RELAY_URL,
 });
+
+if (
+  env.NODE_ENV === "production" &&
+  pushRouting.relayUrl !== undefined &&
+  !env.PUSH_RELAY_PRIVATE_KEY &&
+  !env.PUSH_RELAY_IDENTITY_SECRET
+) {
+  // The generated identity would otherwise sit in the database as plaintext,
+  // and anyone with a backup could sign as this server at the relay.
+  throw new Error(
+    "The push relay needs PUSH_RELAY_IDENTITY_SECRET (openssl rand -base64 48) " +
+      "or PUSH_RELAY_PRIVATE_KEY in production. An identity already stored is sealed " +
+      "with the secret on the next start and keeps its serverId.",
+  );
+}
 
 if (env.PUSH_RELAY_ENABLED === true && pushRouting.relayUrl === undefined) {
   // Asked for the relay and told nowhere to find it: refuse to start rather

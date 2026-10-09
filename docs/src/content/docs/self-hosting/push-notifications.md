@@ -31,10 +31,13 @@ There is no public Jolt push relay yet, so there is no default
 yourself. This page will name the public relay once it exists.
 :::
 
-Set the relay's URL in `.env` and recreate the containers:
+Set the relay's URL in `.env`, and a secret that keeps the server's relay
+identity sealed in the database (generate it with `openssl rand -base64 48`),
+then recreate the containers:
 
 ```dotenv
 PUSH_RELAY_URL=https://relay.example/
+PUSH_RELAY_IDENTITY_SECRET=<openssl rand -base64 48>
 ```
 
 ```bash
@@ -45,7 +48,8 @@ That is all. With a relay URL and no `APNS_*` credentials, the server uses the
 relay on its own. There is nothing to sign up for:
 
 1. The first time the server needs the relay, it generates an Ed25519 key
-   pair, stores it in the database and registers its public key with the
+   pair, stores it in the database sealed with `PUSH_RELAY_IDENTITY_SECRET`,
+   and registers its public key with the
    relay. The relay identifies the server by an ID derived from that key,
    such as `srv_kzdvvj2umnduyauf35o36k6kw4`. The admin overview shows the ID
    and whether the relay has accepted it.
@@ -70,6 +74,7 @@ What the relay can and cannot see is described in
 | [`PUSH_RELAY_ENABLED`](/jolt-server/self-hosting/configuration/#push_relay_enabled) | unset (automatic) | `true` prefers the relay even with APNs credentials; `false` never contacts it |
 | [`PUSH_RELAY_SERVER_NAME`](/jolt-server/self-hosting/configuration/#push_relay_server_name-push_relay_public_url) | none | Opt-in: a name the relay operator sees |
 | [`PUSH_RELAY_PUBLIC_URL`](/jolt-server/self-hosting/configuration/#push_relay_server_name-push_relay_public_url) | none | Opt-in: your server's address, for the relay operator |
+| [`PUSH_RELAY_IDENTITY_SECRET`](/jolt-server/self-hosting/configuration/#push_relay_identity_secret) | none; required in production | Seals the generated identity in the database. Never change it |
 | [`PUSH_RELAY_PRIVATE_KEY`](/jolt-server/self-hosting/configuration/#push_relay_private_key) | generated | The server's identity at the relay, if you want to manage it yourself |
 
 ### Limits
@@ -81,11 +86,15 @@ reported when the server registered.
 
 ### Keep the identity
 
-The server's relay identity lives in the `server_setting` table, and every app
-registration is tied to it. Restoring a backup keeps it. Starting from an
-empty database creates a new identity, and every phone has to register again,
-which the app does by itself the next time it starts. If you rebuild databases
-often, generate a key once and set it in `PUSH_RELAY_PRIVATE_KEY`:
+The server's relay identity lives in the `server_setting` table, sealed with
+`PUSH_RELAY_IDENTITY_SECRET`, and every app registration is tied to it.
+Restoring a backup keeps it, as long as you also keep the secret: the database
+alone cannot open it, which is the point. Starting from an empty database, or
+losing the secret, creates a new identity, and every phone has to register
+again, which the app does by itself the next time it starts. If you rebuild
+databases often, or want nothing secret in the database at all, generate a key
+once and set it in `PUSH_RELAY_PRIVATE_KEY` instead; then
+`PUSH_RELAY_IDENTITY_SECRET` is not needed:
 
 ```bash
 openssl genpkey -algorithm ed25519

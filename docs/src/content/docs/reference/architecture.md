@@ -141,7 +141,11 @@ has the table.
 (specified in the jolt-relay repository, `spec/protocol-v1.md`):
 
 - The server is an Ed25519 key pair, from `PUSH_RELAY_PRIVATE_KEY` or
-  generated on first use and stored as the `relay_identity` server setting.
+  generated on first use and stored as the `relay_identity` server setting,
+  sealed under a key derived from `PUSH_RELAY_IDENTITY_SECRET`
+  (`src/lib/sealed.ts`). Not under `BETTER_AUTH_SECRET`: rotating that must
+  not change the server ID. An identity stored unsealed by an older version
+  is sealed in place the first time it is read with the secret.
   Its ID is `srv_` and the base32 of the first 16 bytes of SHA-256 of the
   public key.
 - Every request to the relay carries a JWT signed with that key, valid for
