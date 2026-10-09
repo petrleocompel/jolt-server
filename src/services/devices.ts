@@ -2,26 +2,68 @@ import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import { db } from "#/db";
 import { deviceToken } from "#/db/schema";
 import { ApiError } from "#/api/errors";
-import type { Device } from "#/api/schemas";
+import type { Device, PushTokenBody } from "#/api/schemas";
+import { env } from "#/env";
 import type { PushTarget } from "#/push";
+import { fromBase64url, payloadKeyId } from "#/push/envelope";
+import { atRestKey, openPayloadKey, sealPayloadKey } from "#/push/payload-key";
+
+let cachedAtRestKey: Buffer | null = null;
+
+/** Derived once: HKDF is cheap, but every poke would otherwise repeat it. */
+function payloadKeyAtRest(): Buffer {
+  cachedAtRestKey ??= atRestKey(env.BETTER_AUTH_SECRET);
+  return cachedAtRestKey;
+}
 
 /**
- * Called once per launch after the app receives its APNs token. A device may
- * move between accounts (re-login on the same phone), so the token — not the
- * user — is the conflict target: the row is reassigned rather than duplicated.
+ * Called once per launch after the app receives its APNs token, or its
+ * relay token. A device may move between accounts (re-login on the same
+ * phone), so the token — not the user — is the conflict target: the row is
+ * reassigned rather than duplicated. A relay registration also replaces the
+ * payload key, since the app may have generated a new one.
  */
-export async function registerToken(
-  userId: string,
-  token: string,
-  platform: "ios" = "ios",
-): Promise<void> {
+export async function registerToken(userId: string, body: PushTokenBody): Promise<void> {
   const now = new Date();
+  if (body.transport === "relay") {
+    const payloadKey = fromBase64url(body.payloadKey);
+    // The id is derived, not chosen, and every envelope names it. One that
+    // does not match would have the app look up a key it never stored.
+    if (payloadKeyId(payloadKey) !== body.keyId) {
+      throw ApiError.badRequest("keyId: does not match payloadKey.");
+    }
+    const relay = {
+      userId,
+      platform: body.platform,
+      transport: "relay" as const,
+      payloadKey: sealPayloadKey(payloadKeyAtRest(), body.relayToken, payloadKey),
+      keyId: body.keyId,
+      lastSeenAt: now,
+    };
+    await db
+      .insert(deviceToken)
+      .values({ ...relay, token: body.relayToken })
+      .onConflictDoUpdate({
+        target: deviceToken.token,
+        set: { ...relay, disabledAt: null },
+      });
+    return;
+  }
+
+  const apns = {
+    userId,
+    platform: body.platform,
+    transport: "apns" as const,
+    payloadKey: null,
+    keyId: null,
+    lastSeenAt: now,
+  };
   await db
     .insert(deviceToken)
-    .values({ userId, token, platform, lastSeenAt: now })
+    .values({ ...apns, token: body.token })
     .onConflictDoUpdate({
       target: deviceToken.token,
-      set: { userId, platform, lastSeenAt: now, disabledAt: null },
+      set: { ...apns, disabledAt: null },
     });
 }
 
@@ -43,13 +85,39 @@ export async function unregisterToken(userId: string, token: string): Promise<vo
     .where(and(eq(deviceToken.userId, userId), eq(deviceToken.token, token)));
 }
 
+const targetColumns = {
+  id: deviceToken.id,
+  token: deviceToken.token,
+  transport: deviceToken.transport,
+  payloadKey: deviceToken.payloadKey,
+};
+
+/** A row as the push senders want it: the relay payload key unsealed. */
+function toTarget(row: {
+  id: string;
+  token: string;
+  transport: PushTarget["transport"];
+  payloadKey: string | null;
+}): PushTarget {
+  if (row.transport !== "relay") return { id: row.id, token: row.token, transport: row.transport };
+  const payloadKey = row.payloadKey
+    ? openPayloadKey(payloadKeyAtRest(), row.token, row.payloadKey)
+    : null;
+  return {
+    id: row.id,
+    token: row.token,
+    transport: row.transport,
+    ...(payloadKey ? { payloadKey } : {}),
+  };
+}
+
 /** Every live device for a user — poke pushes fan out to all of them. */
 export async function activeTargets(userId: string): Promise<Array<PushTarget>> {
   const rows = await db
-    .select({ id: deviceToken.id, token: deviceToken.token })
+    .select(targetColumns)
     .from(deviceToken)
     .where(and(eq(deviceToken.userId, userId), isNull(deviceToken.disabledAt)));
-  return rows;
+  return rows.map(toTarget);
 }
 
 /**
@@ -67,6 +135,7 @@ export async function listDevices(userId: string): Promise<Array<Device>> {
   return rows.map((row) => ({
     id: row.id,
     platform: row.platform,
+    transport: row.transport,
     tokenSuffix: row.token.slice(-8),
     isActive: row.disabledAt === null,
     createdAt: row.createdAt.toISOString(),
@@ -86,7 +155,7 @@ export async function targetsFor(
   if (!deviceId) return activeTargets(userId);
 
   const rows = await db
-    .select({ id: deviceToken.id, token: deviceToken.token })
+    .select(targetColumns)
     .from(deviceToken)
     .where(
       and(
@@ -98,10 +167,13 @@ export async function targetsFor(
     .limit(1);
 
   if (rows.length === 0) throw ApiError.notFound("No active device with that id.");
-  return rows;
+  return rows.map(toTarget);
 }
 
-/** APNs said 410 Unregistered — stop sending, let cron reap the row later. */
+/**
+ * APNs said 410 Unregistered, or the relay said `unregistered` — stop
+ * sending, let cron reap the row later.
+ */
 export async function markUnregistered(ids: Array<string>): Promise<void> {
   if (ids.length === 0) return;
   await db

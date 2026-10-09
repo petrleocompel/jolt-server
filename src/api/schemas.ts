@@ -153,15 +153,27 @@ export const PokePushPayload = z.object({
   sentAt: z.iso.datetime(),
   /** Sent by a friend's automation, not by the friend in person. */
   viaApiToken: z.boolean(),
+  /**
+   * The relay `serverId` of the sending server. Present on pushes delivered
+   * through the relay, where the app checks it against the envelope's `srv`.
+   */
+  serverId: z.string().optional(),
 });
+
+export const DevicePlatform = z.enum(["ios", "android"]);
+
+/** How a registered device's pushes leave the server. */
+export const PushTransport = z.enum(["apns", "relay"]);
 
 /**
  * One of the signed-in user's registered devices. Only the tail of the APNs
- * token is exposed — enough for a phone to recognise itself in the list.
+ * token (or relay token) is exposed — enough for a phone to recognise itself
+ * in the list.
  */
 export const Device = z.object({
   id: z.uuid(),
-  platform: z.enum(["ios"]),
+  platform: DevicePlatform,
+  transport: PushTransport,
   tokenSuffix: z.string(),
   isActive: z.boolean(),
   createdAt: z.iso.datetime(),
@@ -198,8 +210,13 @@ export const TestPushStatus = z.object({
   sentAt: z.iso.datetime(),
   source: z.enum(["web", "app"]),
   stimulus: StimulusConfig.optional(),
-  /** False when the server is running the console stub instead of real APNs. */
+  /**
+   * False when the server is running the console stub instead of delivering.
+   * Kept for clients that predate `pushTransport`; true for the relay too.
+   */
   apnsConfigured: z.boolean(),
+  /** How this server delivers pushes: its own APNs credentials, the relay, or not at all. */
+  pushTransport: z.enum(["apns", "relay", "none"]),
   devices: z.array(TestPushDeviceResult),
   acks: z.array(TestPushAck),
 });
@@ -211,6 +228,51 @@ export const TestPushPayload = z.object({
   sentAt: z.iso.datetime(),
   source: z.enum(["web", "app"]),
   stimulus: StimulusConfig.optional(),
+  /** As on `PokePushPayload`: present on pushes delivered through the relay. */
+  serverId: z.string().optional(),
+});
+
+/**
+ * What `GET /push/config` tells the app to register with: the server's own
+ * APNs (`apns`), the push relay (`relay`), or nothing (`none`).
+ */
+export const PushConfig = z.object({
+  transport: z.enum(["apns", "relay", "none"]),
+  /** Only for `apns`: which APNs environment the server's credentials target. */
+  apnsEnvironment: z.enum(["sandbox", "production"]).optional(),
+  /** Only for `relay`: where to register, and as which server. */
+  relay: z.object({ url: z.url(), serverId: z.string() }).optional(),
+});
+
+/** base64url without padding, `bytes` long once decoded. */
+function base64urlOf(bytes: number) {
+  return z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${Math.ceil((bytes * 4) / 3)}}$`));
+}
+
+/**
+ * The original registration: an APNs device token the server pushes to
+ * with its own credentials. No `transport` means `apns`, which is what keeps
+ * every app build from before the relay working.
+ */
+export const ApnsPushTokenRegistration = z.object({
+  transport: z.literal("apns").optional(),
+  token: z.string().min(1),
+  platform: z.literal("ios"),
+});
+
+/**
+ * A device that registered with the push relay. The server never sees the
+ * APNs or FCM token — only the relay's token for it, and the key the app
+ * decrypts its pushes with.
+ */
+export const RelayPushTokenRegistration = z.object({
+  transport: z.literal("relay"),
+  platform: DevicePlatform,
+  relayToken: z.string().regex(/^rt_[A-Za-z0-9_-]{43}$/),
+  /** 32 random bytes, base64url. */
+  payloadKey: base64urlOf(32),
+  /** base64url of the first 8 bytes of SHA-256(payloadKey). */
+  keyId: base64urlOf(8),
 });
 
 /**
@@ -275,13 +337,17 @@ export const LoginBody = z.object({
   password: z.string(),
 });
 
-export const PushTokenBody = z.object({
-  token: z.string().min(1),
-  platform: z.enum(["ios"]),
-});
+/** One of the two registrations — see `ApnsPushTokenRegistration`. */
+export const PushTokenBody = z.union([ApnsPushTokenRegistration, RelayPushTokenRegistration]);
 
-/** Sign-out: drop this phone from the account it was registered to. */
-export const ForgetPushTokenBody = z.object({ token: z.string().min(1) });
+/**
+ * Sign-out: drop this phone from the account it was registered to, by the
+ * token it registered with — whichever kind that was.
+ */
+export const ForgetPushTokenBody = z.union([
+  z.object({ token: z.string().min(1) }),
+  z.object({ relayToken: z.string().min(1) }),
+]);
 
 /**
  * Exactly one of handle / inviteCode — there is no discovery endpoint by
@@ -400,6 +466,10 @@ export type User = z.infer<typeof User>;
 export type PokePushPayload = z.infer<typeof PokePushPayload>;
 export type AckableStatus = z.infer<typeof AckableStatus>;
 export type Device = z.infer<typeof Device>;
+export type DevicePlatform = z.infer<typeof DevicePlatform>;
+export type PushTransport = z.infer<typeof PushTransport>;
+export type PushConfig = z.infer<typeof PushConfig>;
+export type PushTokenBody = z.infer<typeof PushTokenBody>;
 export type TestPushDeviceResult = z.infer<typeof TestPushDeviceResult>;
 export type TestPushAck = z.infer<typeof TestPushAck>;
 export type TestPushStatus = z.infer<typeof TestPushStatus>;
@@ -426,11 +496,16 @@ export const components = {
   PokeDeliveryStatus,
   PokeEvent,
   PokePushPayload,
+  DevicePlatform,
+  PushTransport,
   Device,
   TestPushDeviceResult,
   TestPushAck,
   TestPushStatus,
   TestPushPayload,
+  PushConfig,
+  ApnsPushTokenRegistration,
+  RelayPushTokenRegistration,
   ApiTokenScope,
   ApiTokenFriendScope,
   ApiToken,

@@ -37,6 +37,13 @@ export interface PokePushPayload {
    * render their own.
    */
   viaApiToken: boolean;
+  /**
+   * The relay `serverId` of the server that sent it. Set by the relay
+   * sender, which seals it into the envelope: the app checks it against the
+   * envelope's `srv` and drops a push that claims to be from another server.
+   * Direct APNs pushes leave it out.
+   */
+  serverId?: string;
 }
 
 /**
@@ -57,16 +64,32 @@ export interface TestPushPayload {
   sentAt: string;
   source: "web" | "app";
   stimulus?: StimulusConfig;
+  /** As on `PokePushPayload`: set by the relay sender only. */
+  serverId?: string;
 }
+
+export type PushTransport = "apns" | "relay";
 
 export interface PushTarget {
   /** device_token.id, so a failure can be traced back to a row. */
   id: string;
+  /** The APNs device token, or the relay token for `relay`. */
   token: string;
+  transport: PushTransport;
+  /**
+   * Relay only: the device's payload key, already unsealed. Absent when the
+   * stored key could not be opened (BETTER_AUTH_SECRET changed since) — the
+   * relay sender reports such a target `rejected` until the app registers
+   * again.
+   */
+  payloadKey?: Buffer;
 }
 
 export type PushFailureReason =
-  /** APNs 410, or 400/BadDeviceToken — the token is dead, stop using it. */
+  /**
+   * APNs 410, or 400/BadDeviceToken, or the relay's `unregistered` — the
+   * token is dead, stop using it.
+   */
   | "unregistered"
   /** Transient: network, 429, 5xx. Worth retrying later. */
   | "transient"
