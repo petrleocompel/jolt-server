@@ -16,12 +16,14 @@ interface Mocked {
   inserted: Array<Record<string, unknown>>;
   conflicts: Array<{ set: Record<string, unknown>; setWhere?: unknown }>;
   rows: Array<Record<string, unknown>>;
+  /** The columns the last `select` asked for. */
+  selected: Record<string, unknown>;
   /** The token already has a row, and it is disabled: the update matches nothing. */
   disabledRowExists: boolean;
 }
 
 const mocked = vi.hoisted(
-  (): Mocked => ({ inserted: [], conflicts: [], rows: [], disabledRowExists: false }),
+  (): Mocked => ({ inserted: [], conflicts: [], rows: [], selected: {}, disabledRowExists: false }),
 );
 
 vi.mock("#/env", () => ({ env: { BETTER_AUTH_SECRET: "x".repeat(48) } }));
@@ -42,11 +44,19 @@ vi.mock("#/db", () => ({
         },
       }),
     }),
-    select: () => ({ from: () => ({ where: async () => mocked.rows }) }),
+    select: (fields: Record<string, unknown>) => {
+      mocked.selected = fields;
+      return {
+        from: () => ({
+          where: async () => mocked.rows,
+          innerJoin: () => ({ orderBy: () => ({ limit: async () => mocked.rows }) }),
+        }),
+      };
+    },
   },
 }));
 
-const { activeTargets, registerToken } = await import("#/services/devices");
+const { activeTargets, listAllDevices, registerToken } = await import("#/services/devices");
 
 beforeEach(() => {
   mocked.inserted = [];
@@ -166,3 +176,32 @@ describe("activeTargets", () => {
     ]);
   });
 });
+
+describe("listAllDevices", () => {
+  it("never reads the whole token, only its last 8 characters", async () => {
+    const at = new Date("2026-10-09T12:00:00.000Z");
+    mocked.rows = [
+      {
+        id: "r",
+        tokenSuffix: "AAAAAAAA",
+        platform: "android",
+        transport: "relay",
+        createdAt: at,
+        lastSeenAt: at,
+        disabledAt: null,
+        handle: "frank",
+        userId: "user-1",
+      },
+    ];
+
+    const [device] = await listAllDevices();
+
+    // A relay token is a bearer credential for unregistering the device at
+    // the relay; the admin page must not receive it.
+    expect(Object.keys(mocked.selected)).not.toContain("token");
+    expect(Object.keys(mocked.selected)).toContain("tokenSuffix");
+    expect(device).not.toHaveProperty("token");
+    expect(device).toMatchObject({ tokenSuffix: "AAAAAAAA", transport: "relay", disabledAt: null });
+  });
+});
+

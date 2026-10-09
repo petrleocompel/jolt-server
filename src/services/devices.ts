@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { db } from "#/db";
-import { deviceToken } from "#/db/schema";
+import { deviceToken, user as userTable } from "#/db/schema";
 import { ApiError } from "#/api/errors";
 import type { Device, PushTokenBody } from "#/api/schemas";
 import { env } from "#/env";
@@ -155,6 +155,39 @@ export async function listDevices(userId: string): Promise<Array<Device>> {
     isActive: row.disabledAt === null,
     createdAt: row.createdAt.toISOString(),
     lastSeenAt: row.lastSeenAt.toISOString(),
+  }));
+}
+
+/**
+ * Every device on the server, for /admin/devices. Like `listDevices`, only
+ * the last 8 characters of the token, cut in the query so the whole value
+ * never leaves the database: for a relay device it is the `relayToken`, and
+ * holding that is enough to unregister the device at the relay (protocol
+ * C5). An admin page's responses end up in browser extensions, shared
+ * machines and HAR files.
+ */
+export async function listAllDevices(limit = 200) {
+  const rows = await db
+    .select({
+      id: deviceToken.id,
+      tokenSuffix: sql<string>`right(${deviceToken.token}, 8)`,
+      platform: deviceToken.platform,
+      transport: deviceToken.transport,
+      createdAt: deviceToken.createdAt,
+      lastSeenAt: deviceToken.lastSeenAt,
+      disabledAt: deviceToken.disabledAt,
+      handle: userTable.handle,
+      userId: deviceToken.userId,
+    })
+    .from(deviceToken)
+    .innerJoin(userTable, eq(userTable.id, deviceToken.userId))
+    .orderBy(desc(deviceToken.lastSeenAt))
+    .limit(limit);
+  return rows.map((r) => ({
+    ...r,
+    createdAt: r.createdAt.toISOString(),
+    lastSeenAt: r.lastSeenAt.toISOString(),
+    disabledAt: r.disabledAt?.toISOString() ?? null,
   }));
 }
 
