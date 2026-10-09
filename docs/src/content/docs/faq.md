@@ -32,10 +32,12 @@ up or log in on the new one. Friends have to be on the same server as you.
 
 ## Does push work with my own server?
 
-Only with an app build signed by your own Apple team. APNs keys only work for
-builds signed by the same team, so a key from your Apple Developer account
-cannot push to the TestFlight builds. Without push, everything else works, and
-pokes still arrive whenever the app is open. See
+Yes, through the Jolt push relay, which forwards your server's pushes to the
+official app builds without being able to read them. Set `PUSH_RELAY_URL` and
+that is all; there is no public relay yet, so for now that means a relay you
+run. The alternative is your own APNs key, which only works with an app build
+signed by your own Apple team. Without push, everything else works, and pokes
+still arrive whenever the app is open. See
 [Push notifications](/jolt-server/self-hosting/push-notifications/).
 
 ## Can people find me by searching?
@@ -68,7 +70,9 @@ Unanswered friend requests are rejected after 30 days
 ## Does my server send data anywhere else?
 
 Your instance holds your data in its own Postgres. It contacts Apple's push
-service only if you configure APNs, and reports errors to Sentry only if you
+service only if you configure APNs, the push relay only if you set
+`PUSH_RELAY_URL` (see [what the relay sees](/jolt-server/self-hosting/push-relay-privacy/)),
+and reports errors to Sentry only if you
 set `SENTRY_DSN`. The Let's Encrypt certificate is requested by the built-in
 Caddy.
 

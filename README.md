@@ -11,7 +11,7 @@ wearables, with permissions each person controls.**
 
 Jolt is an independent iOS client for Pavlok wearables. This server holds
 the accounts, the friend graph and the poke history, and delivers each poke to
-the recipient's phone over APNs. Anyone can run their own instance: the app
+the recipient's phone. Anyone can run their own instance: the app
 takes a server URL in its settings. The iOS app is in private testing
 (TestFlight) for now.
 
@@ -20,10 +20,12 @@ takes a server URL in its settings. The iOS app is in private testing
 - **Per-stimulus permissions.** Each friend gets separate allow flags,
   intensity caps and cooldowns for zap, vibe and beep, set by the person
   receiving them and enforced by the server on every poke.
-- **Reliable delivery over APNs.** Every poke is sent as an alert plus a silent
-  push, and the device acknowledges the outcome (`fired`, `muted`,
-  `deviceNotConnected`, …). Without Apple credentials the server logs pushes
-  instead of sending them, and everything else keeps working.
+- **Push without an Apple account.** The Jolt push relay delivers your
+  server's pushes to the official app builds, end-to-end encrypted so the
+  relay cannot read them; your own APNs key works too. Every poke is sent as an
+  alert plus a silent push, and the device acknowledges the outcome (`fired`,
+  `muted`, `deviceNotConnected`, …). Without push configured the server logs
+  pushes instead of sending them, and everything else keeps working.
 - **Personal access tokens.** Your own scripts can jolt you or poke friends.
   Each token has its own scopes, friend list, intensity and rate limits, and
   each recipient decides whether a friend's automations may reach them.
@@ -83,7 +85,9 @@ likely to touch:
 | --- | --- | --- |
 | `PUBLIC_URL` | `https://$APP_HOST` | Public origin, if TLS ends elsewhere or you serve plain HTTP on a LAN |
 | `TRUSTED_ORIGINS` | none | Other origins browsers may sign in from, comma-separated |
-| `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_P8` | none | APNs token auth. Set all three to send real pushes |
+| `PUSH_RELAY_URL` | none (no public relay yet) | Push relay to deliver through, with no Apple credentials of your own |
+| `PUSH_RELAY_SERVER_NAME`, `PUSH_RELAY_PUBLIC_URL` | none | Opt-in: tell the relay operator who you are |
+| `APNS_KEY_ID`, `APNS_TEAM_ID`, `APNS_KEY_P8` | none | APNs token auth, for your own app build. Set all three |
 | `APNS_BUNDLE_ID`, `APNS_ENV` | `cz.peelco.jolt`, `production` | Must match the app build on the phone |
 | `AUTOMATION_CONSENT_REQUIRED` | unset (an admin decides) | Whether friends' tokens need each recipient's consent |
 | `PUSH_TIME_ZONE` | `UTC` | Time zone of the time shown in notification text |
@@ -124,7 +128,7 @@ openapi/jolt-v1.yaml   canonical API contract
 src/routes/            TanStack Start pages and API routes (/api/v1/*)
 src/api/               request schemas (Zod), auth bridge, response shaping
 src/services/          friends and permissions, pokes, devices, API tokens, settings
-src/push/              APNs sender and the console fallback
+src/push/              APNs and push relay senders, relay crypto, the console fallback
 src/db/                Drizzle schema; migrations live in drizzle/
 src/cron/              retention and cleanup jobs
 deploy/                compose files for development, e2e and building from source

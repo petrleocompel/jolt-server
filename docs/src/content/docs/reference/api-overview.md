@@ -62,8 +62,9 @@ The web UI uses a session cookie instead.
 | `GET`    | `/me/tokens`                                    | List your personal access tokens                     | No                    |
 | `POST`   | `/me/tokens`                                    | Mint a personal access token                         | No                    |
 | `DELETE` | `/me/tokens/{tokenId}`                          | Revoke a personal access token                       | No                    |
-| `POST`   | `/devices/push-token`                           | Register this device's APNs token                    | No                    |
-| `DELETE` | `/devices/push-token`                           | Forget this device's APNs token on sign-out          | No                    |
+| `GET`    | `/push/config`                                  | How to register for pushes: APNs, relay or none      | No                    |
+| `POST`   | `/devices/push-token`                           | Register this device's APNs token or relay token     | No                    |
+| `DELETE` | `/devices/push-token`                           | Forget this device's registration on sign-out        | No                    |
 | `GET`    | `/devices`                                      | Your registered devices                              | No                    |
 | `POST`   | `/devices/test-push`                            | Send yourself a test push                            | No                    |
 | `GET`    | `/devices/test-push/{testID}`                   | State of a test push, including acks so far          | No                    |

@@ -47,6 +47,7 @@ export default defineConfig({
 						'self-hosting/configuration',
 						'self-hosting/reverse-proxy',
 						'self-hosting/push-notifications',
+						'self-hosting/push-relay-privacy',
 						'self-hosting/automated-pokes',
 						'self-hosting/upgrading',
 						'self-hosting/backup-restore',
