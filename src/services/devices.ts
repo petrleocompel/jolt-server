@@ -22,6 +22,10 @@ function payloadKeyAtRest(): Buffer {
  * phone), so the token — not the user — is the conflict target: the row is
  * reassigned rather than duplicated. A relay registration also replaces the
  * payload key, since the app may have generated a new one.
+ *
+ * A disabled APNs token is revived: APNs may hand the same token back, and
+ * a fresh registration is the app saying it works again. A disabled relay
+ * token is not, and the caller gets 410 `relay_token_revoked` instead.
  */
 export async function registerToken(userId: string, body: PushTokenBody): Promise<void> {
   const now = new Date();
@@ -40,13 +44,24 @@ export async function registerToken(userId: string, body: PushTokenBody): Promis
       keyId: body.keyId,
       lastSeenAt: now,
     };
-    await db
+    // Never revives a disabled row (protocol C6): the relay said this token
+    // is gone, so pushes to it would only fail again. The app has to register
+    // with the relay afresh, and it learns that from the 410.
+    const [stored] = await db
       .insert(deviceToken)
       .values({ ...relay, token: body.relayToken })
       .onConflictDoUpdate({
         target: deviceToken.token,
-        set: { ...relay, disabledAt: null },
-      });
+        set: relay,
+        setWhere: isNull(deviceToken.disabledAt),
+      })
+      .returning({ id: deviceToken.id });
+    if (!stored) {
+      throw ApiError.gone(
+        "The relay has revoked this registration. Register with the relay again.",
+        "relay_token_revoked",
+      );
+    }
     return;
   }
 

@@ -3,6 +3,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** Machine-readable `error` code, for the few answers a client acts on. */
+    readonly code?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -25,5 +27,8 @@ export class ApiError extends Error {
   }
   static tooManyRequests(message: string) {
     return new ApiError(429, message);
+  }
+  static gone(message: string, code: string) {
+    return new ApiError(410, message, code);
   }
 }

@@ -20,10 +20,13 @@ export function noContent(): Response {
   return new Response(null, { status: 204 });
 }
 
-/** The `Error` schema from the contract — `{ message }`, nothing else. */
+/** The `Error` schema from the contract — `{ message }`, and `error` when it has a code. */
 export function errorResponse(error: unknown): Response {
   if (error instanceof ApiError) {
-    return json({ message: error.message }, error.status);
+    return json(
+      { message: error.message, ...(error.code ? { error: error.code } : {}) },
+      error.status,
+    );
   }
   if (error instanceof z.ZodError) {
     const first = error.issues[0];
