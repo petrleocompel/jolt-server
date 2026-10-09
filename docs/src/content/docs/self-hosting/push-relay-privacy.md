@@ -53,9 +53,10 @@ Two settings are opt-in, and nothing is sent unless you set them:
   your server's public address.
 
 They only help the relay operator recognise your server, for example to
-contact you before blocking a server that sends far more than expected. If you
-remove them later, the next registration stops sending them, but the relay may
-keep what it was told before.
+contact you before blocking a server that sends far more than expected. The
+choice is revocable: remove them, and the next time the server registers (on
+its first push or app registration after a restart) it sends neither, and the
+relay clears what it stored.
 
 ## What the relay operator can do
 
