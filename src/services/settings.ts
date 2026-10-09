@@ -96,3 +96,44 @@ export function effectiveAutomationAllowed(
 export async function serverPolicies(): Promise<ServerPolicies> {
   return { automationConsentRequired: (await automationConsentPolicy()).value };
 }
+
+const RELAY_IDENTITY_KEY = "relay_identity";
+
+const StoredRelayIdentity = z.object({ seed: z.string() });
+
+/**
+ * This server's Ed25519 seed for the push relay (see
+ * src/push/relay-identity.ts), generated on first use and kept here for
+ * good. Not something an admin edits, and deliberately not sealed with
+ * BETTER_AUTH_SECRET: the serverId is derived from it, and rotating the
+ * auth secret must not turn the server into a stranger at the relay.
+ *
+ * Two instances starting at once may both generate one; the first insert
+ * wins and both read it back, so they agree on who they are.
+ */
+export async function relayIdentitySeed(generate: () => string): Promise<string> {
+  const read = async () => {
+    const [row] = await db
+      .select({ value: serverSetting.value })
+      .from(serverSetting)
+      .where(eq(serverSetting.key, RELAY_IDENTITY_KEY))
+      .limit(1);
+    if (!row) return null;
+    const stored = StoredRelayIdentity.safeParse(row.value);
+    // Never replaced when unreadable: a new key is a new serverId, and every
+    // device registered with the relay for the old one would go quiet.
+    if (!stored.success) throw new Error(`[settings] ${RELAY_IDENTITY_KEY} is unreadable`);
+    return stored.data.seed;
+  };
+
+  const existing = await read();
+  if (existing) return existing;
+
+  await db
+    .insert(serverSetting)
+    .values({ key: RELAY_IDENTITY_KEY, value: { seed: generate(), createdAt: new Date().toISOString() } })
+    .onConflictDoNothing({ target: serverSetting.key });
+  const stored = await read();
+  if (!stored) throw new Error(`[settings] could not store ${RELAY_IDENTITY_KEY}`);
+  return stored;
+}

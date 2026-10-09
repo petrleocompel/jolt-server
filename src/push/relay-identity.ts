@@ -234,7 +234,14 @@ export class RelayClient {
       if (this.state.registration === "registered") return Promise.resolve();
       if (this.registering) return this.registering;
       if (this.state.lastError && this.now() - this.failedAt < REGISTRATION_RETRY_MS) {
-        return Promise.reject(new RelayError(this.state.lastError.message));
+        const blocked = this.state.registration === "blocked";
+        return Promise.reject(
+          new RelayError(
+            this.state.lastError.message,
+            blocked ? 403 : undefined,
+            blocked ? "server_blocked" : undefined,
+          ),
+        );
       }
     }
     const attempt = this.register().finally(() => {

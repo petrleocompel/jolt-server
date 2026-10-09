@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   AckBody,
   CreateApiTokenBody,
+  ForgetPushTokenBody,
+  PushTokenBody,
   PokeDeliveryStatus,
   SelfStimulusBody,
   SendFriendRequestBody,
@@ -160,5 +162,53 @@ describe("CreateApiTokenBody", () => {
       friendIDs: [FRIEND],
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("PushTokenBody", () => {
+  const relay = {
+    transport: "relay",
+    platform: "ios",
+    relayToken: `rt_${"A".repeat(43)}`,
+    payloadKey: "oKGio6SlpqeoqaqrrK2ur7CxsrO0tba3uLm6u7y9vr8",
+    keyId: "AOmIZ37s-Uw",
+  };
+
+  it("still takes the original APNs shape, with or without a transport", () => {
+    expect(PushTokenBody.parse({ token: "abc123", platform: "ios" })).toEqual({
+      token: "abc123",
+      platform: "ios",
+    });
+    expect(PushTokenBody.safeParse({ token: "abc123", platform: "ios", transport: "apns" }).success).toBe(
+      true,
+    );
+  });
+
+  it("takes a relay registration, for iOS and Android", () => {
+    expect(PushTokenBody.parse(relay)).toEqual(relay);
+    expect(PushTokenBody.safeParse({ ...relay, platform: "android" }).success).toBe(true);
+  });
+
+  it.each([
+    ["an APNs token for Android", { token: "abc123", platform: "android" }],
+    ["an empty APNs token", { token: "", platform: "ios" }],
+    ["a relay registration without its key", { ...relay, payloadKey: undefined }],
+    ["a relay registration without its kid", { ...relay, keyId: undefined }],
+    ["a relay token that is not one", { ...relay, relayToken: "abc123" }],
+    ["a payload key of the wrong length", { ...relay, payloadKey: "AAAA" }],
+    ["a payload key that is not base64url", { ...relay, payloadKey: `${"A".repeat(42)}=` }],
+    ["a relay shape with an APNs token instead", { transport: "relay", platform: "ios", token: "abc123" }],
+    ["an unknown transport", { ...relay, transport: "fcm" }],
+  ])("refuses %s", (_label, body) => {
+    expect(PushTokenBody.safeParse(body).success).toBe(false);
+  });
+});
+
+describe("ForgetPushTokenBody", () => {
+  it("takes either token the device registered with", () => {
+    expect(ForgetPushTokenBody.safeParse({ token: "abc123" }).success).toBe(true);
+    expect(ForgetPushTokenBody.safeParse({ relayToken: "rt_abc" }).success).toBe(true);
+    expect(ForgetPushTokenBody.safeParse({}).success).toBe(false);
+    expect(ForgetPushTokenBody.safeParse({ relayToken: "" }).success).toBe(false);
   });
 });
