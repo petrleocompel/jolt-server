@@ -77,10 +77,13 @@ relay clears what it stored.
 - Each device's relay token and payload key, in the `device_token` table. The
   payload key is encrypted with a key derived from `BETTER_AUTH_SECRET`, so a
   copy of the database alone does not reveal it.
-- The server's relay identity, in the `server_setting` table, unless you set
-  [`PUSH_RELAY_PRIVATE_KEY`](/jolt-server/self-hosting/configuration/#push_relay_private_key).
-  Whoever has it can register as your server at the relay and send generic
-  alerts to your users' phones, though not readable pushes. Keep backups as
+- The server's relay identity, in the `server_setting` table, sealed with
+  [`PUSH_RELAY_IDENTITY_SECRET`](/jolt-server/self-hosting/configuration/#push_relay_identity_secret),
+  unless you set
+  [`PUSH_RELAY_PRIVATE_KEY`](/jolt-server/self-hosting/configuration/#push_relay_private_key)
+  and nothing is stored. Whoever has the identity can sign as your server at
+  the relay and send generic alerts to your users' phones, though not readable
+  pushes, so a database backup alone does not give it away. Keep `.env` as
   private as the database itself.
 
 If you would rather nothing leave your server, do not set `PUSH_RELAY_URL`:
