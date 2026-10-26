@@ -6,12 +6,13 @@ stages:
   - deploy
 
 variables:
-  NODE_IMAGE: "node:22-alpine"
+  NODE_IMAGE: "node:26-alpine"
 
 .node:
   image: $NODE_IMAGE
   before_script:
-    - corepack enable
+    # Node 26 no longer ships corepack; pin pnpm to match package.json#packageManager.
+    - npm install -g pnpm@10.33.0
     - pnpm config set store-dir .pnpm-store
   cache:
     key:

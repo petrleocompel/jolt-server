@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
-FROM node:22-alpine AS base
+FROM node:26-alpine AS base
+# Node 26 no longer ships corepack; pin pnpm to match package.json#packageManager.
 ENV PNPM_HOME=/pnpm PATH=/pnpm:$PATH
-RUN corepack enable
+RUN npm install -g pnpm@10.33.0
 WORKDIR /app
 
 FROM base AS deps
