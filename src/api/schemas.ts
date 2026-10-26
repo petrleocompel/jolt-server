@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { fromBase64url } from "#/push/envelope";
 import "#/lib/zod-locale";
 
 /**
@@ -180,9 +181,11 @@ export const Device = z.object({
   lastSeenAt: z.iso.datetime(),
 });
 
-/** Per-device outcome of a test push, as APNs reported it. */
+/** Per-device outcome of a test push, as the delivery path reported it. */
 export const TestPushDeviceResult = z.object({
   deviceId: z.uuid(),
+  /** The transport this device is registered for — not the server's preferred one. */
+  transport: PushTransport,
   ok: z.boolean(),
   reason: z.enum(["unregistered", "transient", "rejected"]).optional(),
   detail: z.string().optional(),
@@ -244,19 +247,42 @@ export const PushConfig = z.object({
   relay: z.object({ url: z.url(), serverId: z.string() }).optional(),
 });
 
-/** base64url without padding, `bytes` long once decoded. */
+/**
+ * Canonical base64url without padding, `bytes` long once decoded. Alphabet
+ * and length alone are not enough: Node accepts non-canonical padding bits,
+ * and those must be a 400 at the request boundary, not a 500 later.
+ */
 function base64urlOf(bytes: number) {
-  return z.string().regex(new RegExp(`^[A-Za-z0-9_-]{${Math.ceil((bytes * 4) / 3)}}$`));
+  const encodedLength = Math.ceil((bytes * 4) / 3);
+  return z
+    .string()
+    .regex(new RegExp(`^[A-Za-z0-9_-]{${encodedLength}}$`))
+    .refine(
+      (value) => {
+        try {
+          return fromBase64url(value).length === bytes;
+        } catch {
+          return false;
+        }
+      },
+      { message: `must be canonical base64url of ${bytes} bytes` },
+    );
 }
 
 /**
  * The original registration: an APNs device token the server pushes to
  * with its own credentials. No `transport` means `apns`, which is what keeps
- * every app build from before the relay working.
+ * every app build from before the relay working. Relay tokens (`rt_…`) are
+ * refused here so a revoked relay registration cannot be revived as APNs.
  */
 export const ApnsPushTokenRegistration = z.object({
   transport: z.literal("apns").optional(),
-  token: z.string().min(1),
+  token: z
+    .string()
+    .min(1)
+    .refine((token) => !token.startsWith("rt_"), {
+      message: "must not use the relay token namespace",
+    }),
   platform: z.literal("ios"),
 });
 

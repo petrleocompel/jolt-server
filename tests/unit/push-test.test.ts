@@ -49,16 +49,41 @@ beforeEach(() => {
 });
 
 describe("sendTestPush", () => {
-  it("reports every device APNs was asked about", async () => {
+  it("reports every device APNs was asked about, with its transport", async () => {
     const status = await sendTestPush({ userId: ALICE, source: "web" });
 
     expect(status.devices).toEqual([
-      { deviceId: "device-1", ok: true, reason: undefined, detail: undefined },
-      { deviceId: "device-2", ok: true, reason: undefined, detail: undefined },
+      { deviceId: "device-1", transport: "apns", ok: true, reason: undefined, detail: undefined },
+      { deviceId: "device-2", transport: "apns", ok: true, reason: undefined, detail: undefined },
     ]);
     expect(status.acks).toEqual([]);
     expect(status.apnsConfigured).toBe(true);
     expect(status.pushTransport).toBe("apns");
+  });
+
+  it("names each device's own transport, even when it differs from the server's", async () => {
+    routing.transport = "relay";
+    targetsFor.mockResolvedValue([
+      { id: "legacy", token: "aaa", transport: "apns" },
+      { id: "new", token: "rt_x", transport: "relay", payloadKey: Buffer.alloc(32) },
+    ]);
+    sendTest.mockResolvedValue([
+      { targetId: "legacy", ok: false, reason: "rejected", detail: "no APNs" },
+      { targetId: "new", ok: true },
+    ]);
+
+    const status = await sendTestPush({ userId: ALICE, source: "web" });
+    expect(status.pushTransport).toBe("relay");
+    expect(status.devices).toEqual([
+      {
+        deviceId: "legacy",
+        transport: "apns",
+        ok: false,
+        reason: "rejected",
+        detail: "no APNs",
+      },
+      { deviceId: "new", transport: "relay", ok: true, reason: undefined, detail: undefined },
+    ]);
   });
 
   it("says how the server delivers, keeping apnsConfigured true for the relay", async () => {

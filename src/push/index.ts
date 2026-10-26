@@ -10,6 +10,7 @@ import {
 } from "#/push/relay-identity";
 import { RoutingPushSender } from "#/push/routing";
 import type { PushSender } from "#/push/types";
+import { UnavailablePushSender } from "#/push/unavailable";
 import { ApiError } from "#/api/errors";
 import type { PushConfig } from "#/api/schemas";
 import { env, hasApnsCredentials, pushRouting } from "#/env";
@@ -46,21 +47,31 @@ export function relayClient(): RelayClient | null {
 
 /**
  * Real APNs for devices registered directly when credentials are present,
- * the relay for devices registered there when it is configured, the console
- * stub for anything this server cannot deliver. Resolved lazily and cached
- * so the HTTP/2 session to Apple is shared process-wide.
+ * the relay for devices registered there when it is configured. When nothing
+ * is configured, the console stub logs and reports success so local flows
+ * still run. When one transport *is* configured, the other must not pretend
+ * to succeed — that would make a test look like the relay (or APNs) accepted
+ * a push it never saw.
  */
 export function pushSender(): PushSender {
   if (sender) return sender;
 
   const fallback = new ConsolePushSender(console.log, env.PUSH_TIME_ZONE);
   const client = relayClient();
+  const nothingConfigured = pushRouting.transport === "none";
 
-  if (pushRouting.transport === "none" && env.NODE_ENV === "production") {
+  if (nothingConfigured && env.NODE_ENV === "production") {
     console.warn(
       "[push] neither APNS_* nor PUSH_RELAY_URL is configured in production — pokes will be recorded but never delivered",
     );
   }
+
+  const apnsUnavailable = new UnavailablePushSender(
+    "This server has no APNs credentials; re-register the device for the push relay.",
+  );
+  const relayUnavailable = new UnavailablePushSender(
+    "This server has no push relay; re-register the device for direct APNs.",
+  );
 
   sender = new RoutingPushSender({
     apns: hasApnsCredentials
@@ -72,8 +83,10 @@ export function pushSender(): PushSender {
           environment: env.APNS_ENV,
           timeZone: env.PUSH_TIME_ZONE,
         })
-      : fallback,
-    relay: client ? new RelayPushSender(client) : fallback,
+      : nothingConfigured
+        ? fallback
+        : apnsUnavailable,
+    relay: client ? new RelayPushSender(client) : nothingConfigured ? fallback : relayUnavailable,
   });
 
   return sender;

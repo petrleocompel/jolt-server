@@ -159,6 +159,23 @@ export class RelayError extends Error {
 const REGISTRATION_RETRY_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/** The limits object a successful registration must carry. */
+function registrationLimits(value: unknown): RelayStatus["limits"] | null {
+  if (!value || typeof value !== "object") return null;
+  const { perRegistrationPerDay, perServerPerDay } = value as Record<string, unknown>;
+  if (
+    typeof perRegistrationPerDay !== "number" ||
+    typeof perServerPerDay !== "number" ||
+    !Number.isFinite(perRegistrationPerDay) ||
+    !Number.isFinite(perServerPerDay) ||
+    perRegistrationPerDay < 0 ||
+    perServerPerDay < 0
+  ) {
+    return null;
+  }
+  return { perRegistrationPerDay, perServerPerDay };
+}
+
 /**
  * Talks to the relay on this server's behalf: signs each request, and
  * registers the server the first time it is needed rather than at boot, so a
@@ -212,6 +229,9 @@ export class RelayClient {
 
   /** One signed JSON request. Network failures and timeouts reject. */
   async request(method: string, path: string, body?: unknown): Promise<Response> {
+    // Never follow redirects: a 30x to http:// would otherwise send the bearer
+    // JWT and any relay tokens in the clear, and even an https hop would put
+    // credentials on a host the operator did not configure.
     return this.fetchImpl(this.endpoint(path), {
       method,
       headers: {
@@ -220,19 +240,21 @@ export class RelayClient {
         accept: "application/json",
       },
       body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "error",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   }
 
   /**
    * Registers the server unless that already happened in this process.
-   * Concurrent callers share one attempt. `force` re-registers anyway — what
-   * a 404 `unknown_server` from the relay asks for.
+   * Concurrent callers share one attempt, including forced recovery after
+   * `unknown_server`. `force` only bypasses a cached success — it must not
+   * start a second registration while one is already in flight.
    */
   ensureRegistered(options: { force?: boolean } = {}): Promise<void> {
+    if (this.registering) return this.registering;
     if (!options.force) {
       if (this.state.registration === "registered") return Promise.resolve();
-      if (this.registering) return this.registering;
       if (this.state.lastError && this.now() - this.failedAt < REGISTRATION_RETRY_MS) {
         const blocked = this.state.registration === "blocked";
         return Promise.reject(
@@ -269,8 +291,9 @@ export class RelayClient {
       const response = await this.request("POST", "v1/servers", body);
       const payload = (await response.json().catch(() => null)) as {
         serverId?: string;
+        status?: string;
         error?: string;
-        limits?: RelayStatus["limits"];
+        limits?: unknown;
       } | null;
 
       if (response.status === 403 && payload?.error === "server_blocked") {
@@ -284,17 +307,21 @@ export class RelayClient {
           payload?.error,
         );
       }
-      if (payload?.serverId && payload.serverId !== identity.serverId) {
-        // Both sides derive the id from the same key, so a mismatch means
-        // one of the two implementations is wrong — not something to paper over.
+      // A 200/201 with HTML, `{}`, or a blocked status must not count as
+      // registered: `/push/config` would otherwise advertise the relay forever.
+      const limits = registrationLimits(payload?.limits);
+      if (!payload || payload.serverId !== identity.serverId || payload.status !== "active" || !limits) {
         throw new RelayError(
-          `The relay derived ${payload.serverId} for this server's key, expected ${identity.serverId}.`,
+          payload?.serverId && payload.serverId !== identity.serverId
+            ? `The relay derived ${payload.serverId} for this server's key, expected ${identity.serverId}.`
+            : "Relay registration failed: the response was not a valid registration.",
+          response.status,
         );
       }
 
       this.state.registration = "registered";
       this.state.registeredAt = new Date(this.now()).toISOString();
-      this.state.limits = payload?.limits ?? null;
+      this.state.limits = limits;
       console.log(`[push] registered with the relay as ${identity.serverId}`);
     } catch (error) {
       if (this.state.registration !== "blocked") this.state.registration = "failed";

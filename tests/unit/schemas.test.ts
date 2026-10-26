@@ -192,11 +192,13 @@ describe("PushTokenBody", () => {
   it.each([
     ["an APNs token for Android", { token: "abc123", platform: "android" }],
     ["an empty APNs token", { token: "", platform: "ios" }],
+    ["a relay token disguised as APNs", { token: `rt_${"A".repeat(43)}`, platform: "ios" }],
     ["a relay registration without its key", { ...relay, payloadKey: undefined }],
     ["a relay registration without its kid", { ...relay, keyId: undefined }],
     ["a relay token that is not one", { ...relay, relayToken: "abc123" }],
     ["a payload key of the wrong length", { ...relay, payloadKey: "AAAA" }],
     ["a payload key that is not base64url", { ...relay, payloadKey: `${"A".repeat(42)}=` }],
+    ["a noncanonical payload key", { ...relay, payloadKey: `${"A".repeat(42)}B` }],
     ["a relay shape with an APNs token instead", { transport: "relay", platform: "ios", token: "abc123" }],
     ["an unknown transport", { ...relay, transport: "fcm" }],
   ])("refuses %s", (_label, body) => {

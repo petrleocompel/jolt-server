@@ -52,3 +52,30 @@ describe("relay identity in production", () => {
     await expect(loadEnv({ NODE_ENV: "development" })).resolves.toBeDefined();
   });
 });
+
+describe("PUSH_RELAY_URL transport", () => {
+  it("refuses plain HTTP in production", async () => {
+    await expect(
+      loadEnv({
+        PUSH_RELAY_URL: "http://relay.example/",
+        PUSH_RELAY_IDENTITY_SECRET: "i".repeat(48),
+      }),
+    ).rejects.toThrow(/HTTPS/);
+  });
+
+  it("allows plain HTTP outside production", async () => {
+    const { pushRouting } = await loadEnv({
+      NODE_ENV: "development",
+      PUSH_RELAY_URL: "http://127.0.0.1:8787/",
+    });
+    expect(pushRouting.relayUrl).toBe("http://127.0.0.1:8787/");
+  });
+
+  it("allows HTTPS in production", async () => {
+    const { pushRouting } = await loadEnv({
+      PUSH_RELAY_URL: "https://relay.example/",
+      PUSH_RELAY_IDENTITY_SECRET: "i".repeat(48),
+    });
+    expect(pushRouting.relayUrl).toBe("https://relay.example/");
+  });
+});

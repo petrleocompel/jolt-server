@@ -18,12 +18,12 @@ interface Mocked {
   rows: Array<Record<string, unknown>>;
   /** The columns the last `select` asked for. */
   selected: Record<string, unknown>;
-  /** The token already has a row, and it is disabled: the update matches nothing. */
-  disabledRowExists: boolean;
+  /** Conflict update's WHERE matched nothing — returning is empty. */
+  skipConflictUpdate: boolean;
 }
 
 const mocked = vi.hoisted(
-  (): Mocked => ({ inserted: [], conflicts: [], rows: [], selected: {}, disabledRowExists: false }),
+  (): Mocked => ({ inserted: [], conflicts: [], rows: [], selected: {}, skipConflictUpdate: false }),
 );
 
 vi.mock("#/env", () => ({ env: { BETTER_AUTH_SECRET: "x".repeat(48) } }));
@@ -34,13 +34,9 @@ vi.mock("#/db", () => ({
         onConflictDoUpdate: (options: { set: Record<string, unknown>; setWhere?: unknown }) => {
           mocked.inserted.push(row);
           mocked.conflicts.push(options);
-          // Awaitable as is (the APNs branch), or with `.returning()` (the
-          // relay branch), which comes back empty when a `setWhere` excluded
-          // the existing row.
-          return Object.assign(Promise.resolve(), {
-            returning: async () =>
-              mocked.disabledRowExists && options.setWhere ? [] : [{ id: "row-1" }],
-          });
+          return {
+            returning: async () => (mocked.skipConflictUpdate ? [] : [{ id: "row-1" }]),
+          };
         },
       }),
     }),
@@ -62,7 +58,7 @@ beforeEach(() => {
   mocked.inserted = [];
   mocked.conflicts = [];
   mocked.rows = [];
-  mocked.disabledRowExists = false;
+  mocked.skipConflictUpdate = false;
 });
 
 describe("payload keys at rest", () => {
@@ -108,7 +104,7 @@ describe("registerToken", () => {
   });
 
   it("answers 410 relay_token_revoked for a token the relay revoked, without reviving it", async () => {
-    mocked.disabledRowExists = true;
+    mocked.skipConflictUpdate = true;
     const attempt = registerToken("user-1", {
       transport: "relay",
       platform: "ios",
@@ -120,10 +116,17 @@ describe("registerToken", () => {
   });
 
   it("still revives a disabled APNs token, as before", async () => {
-    mocked.disabledRowExists = true;
     await registerToken("user-1", { token: "abc123", platform: "ios" });
     expect(mocked.conflicts[0]).toMatchObject({ set: { disabledAt: null } });
-    expect(mocked.conflicts[0]!.setWhere).toBeUndefined();
+    expect(mocked.conflicts[0]!.setWhere).toBeDefined();
+  });
+
+  it("leaves a conflicting non-APNs row alone instead of clearing disabledAt", async () => {
+    mocked.skipConflictUpdate = true;
+    await expect(registerToken("user-1", { token: "abc123", platform: "ios" })).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(mocked.conflicts[0]!.set).toMatchObject({ disabledAt: null, transport: "apns" });
   });
 
   it("refuses a keyId that is not derived from the key", async () => {

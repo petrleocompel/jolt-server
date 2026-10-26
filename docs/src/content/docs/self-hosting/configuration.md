@@ -226,7 +226,8 @@ Which way the server delivers is decided at startup:
 The base URL of the Jolt push relay, for example `https://relay.example/`.
 There is no public relay yet, so there is no default: until it has an address,
 the relay is only used when you set this. With a URL and no APNs credentials,
-the server uses the relay on its own.
+the server uses the relay on its own. Production requires `https`; plain
+`http` is allowed only in development and test.
 
 ```dotenv
 PUSH_RELAY_URL=https://relay.example/

@@ -140,7 +140,14 @@ vi.mock("#/services/settings", () => ({
 
 describe("pushConfig", () => {
   const fetchMock = vi.fn(async () =>
-    Response.json({ serverId: serverIdVector.serverId, status: "active" }, { status: 201 }),
+    Response.json(
+      {
+        serverId: serverIdVector.serverId,
+        status: "active",
+        limits: { perRegistrationPerDay: 500, perServerPerDay: 20000 },
+      },
+      { status: 201 },
+    ),
   );
 
   beforeEach(() => {
@@ -189,5 +196,43 @@ describe("pushConfig", () => {
     Object.assign(mocked.pushRouting, { transport: "none", relayUrl: undefined });
     const { pushConfig } = await import("#/push");
     expect(await pushConfig()).toEqual({ transport: "none" });
+  });
+});
+
+describe("pushSender unavailable transports", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    mocked.hasApnsCredentials = false;
+    mocked.seed = Buffer.from(serverIdVector.ed25519SeedHex, "hex").toString("base64url");
+  });
+
+  it("rejects APNs devices instead of console-succeeding when only the relay is configured", async () => {
+    Object.assign(mocked.pushRouting, { transport: "relay", relayUrl: "https://relay.example/" });
+    const { pushSender } = await import("#/push");
+    const results = await pushSender().sendTest(
+      [{ id: "legacy", token: "aaa", transport: "apns" }],
+      {
+        testID: "3c2b1a09-8765-4321-a0b1-c2d3e4f5a6b7",
+        sentAt: "2026-10-09T12:33:00.000Z",
+        source: "web",
+      },
+    );
+    expect(results[0]).toMatchObject({ ok: false, reason: "rejected" });
+    expect(results[0]?.detail).toMatch(/APNs/i);
+  });
+
+  it("still console-succeeds when nothing is configured at all", async () => {
+    Object.assign(mocked.pushRouting, { transport: "none", relayUrl: undefined });
+    const { pushSender } = await import("#/push");
+    const results = await pushSender().sendTest(
+      [{ id: "dev", token: "aaa", transport: "apns" }],
+      {
+        testID: "3c2b1a09-8765-4321-a0b1-c2d3e4f5a6b7",
+        sentAt: "2026-10-09T12:33:00.000Z",
+        source: "web",
+      },
+    );
+    expect(results[0]).toEqual({ targetId: "dev", ok: true });
   });
 });

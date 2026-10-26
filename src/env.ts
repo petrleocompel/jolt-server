@@ -86,6 +86,10 @@ const envSchema = z.object({
    * credentials and a relay URL is known; `true` prefers it even when there
    * are, `false` never contacts it.
    */
+  /**
+   * http is allowed only outside production — bearer JWTs and relay tokens
+   * must not travel in the clear on a real deployment.
+   */
   PUSH_RELAY_URL: optionalNonEmpty(z.url({ protocol: /^https?$/ })),
   PUSH_RELAY_ENABLED: optionalBooleanish,
   /**
@@ -167,6 +171,14 @@ export const pushRouting = resolvePushRouting({
   relayEnabled: env.PUSH_RELAY_ENABLED,
   relayUrl: env.PUSH_RELAY_URL ?? DEFAULT_PUSH_RELAY_URL,
 });
+
+if (
+  env.NODE_ENV === "production" &&
+  pushRouting.relayUrl !== undefined &&
+  new URL(pushRouting.relayUrl).protocol !== "https:"
+) {
+  throw new Error("PUSH_RELAY_URL must use HTTPS in production.");
+}
 
 if (
   env.NODE_ENV === "production" &&

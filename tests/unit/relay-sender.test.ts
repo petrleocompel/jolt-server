@@ -22,9 +22,16 @@ interface Call {
   path: string;
   authorization: string;
   body: any;
+  redirect?: RequestRedirect;
 }
 
 type Reply = { status: number; body?: unknown } | Error;
+
+const VALID_REGISTRATION = {
+  serverId: SERVER_ID,
+  status: "active",
+  limits: { perRegistrationPerDay: 500, perServerPerDay: 20000 },
+};
 
 /**
  * A relay that answers registrations 201 by default and each `/v1/send`
@@ -43,13 +50,11 @@ function fakeRelay() {
       path: url.pathname,
       authorization: new Headers(init?.headers).get("authorization") ?? "",
       body,
+      redirect: init?.redirect,
     });
     let reply: Reply;
     if (url.pathname === "/v1/servers") {
-      reply = servers.shift() ?? {
-        status: 201,
-        body: { serverId: SERVER_ID, status: "active", limits: { perRegistrationPerDay: 500, perServerPerDay: 20000 } },
-      };
+      reply = servers.shift() ?? { status: 201, body: VALID_REGISTRATION };
     } else {
       const next = sends.shift();
       reply =
@@ -335,6 +340,97 @@ describe("RelayPushSender", () => {
     const sender = new RelayPushSender(makeClient());
     await Promise.all([sender.sendPoke(relayTargets(1), poke), sender.sendPoke(relayTargets(1), poke)]);
     expect(relay.calls.filter((c) => c.path === "/v1/servers")).toHaveLength(1);
+  });
+
+  it("shares one in-flight registration even when every caller forces", async () => {
+    let registrations = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      expect(url.pathname).toBe("/v1/servers");
+      registrations += 1;
+      await held;
+      return Response.json(VALID_REGISTRATION, { status: 201 });
+    }) as typeof fetch;
+
+    const client = new RelayClient({
+      url: "https://relay.example",
+      loadIdentity: async () => identity,
+      version: "1.2.3",
+      fetch: fetchImpl,
+    });
+
+    const pending = Promise.all([
+      client.ensureRegistered({ force: true }),
+      client.ensureRegistered({ force: true }),
+      client.ensureRegistered({ force: true }),
+      client.ensureRegistered({ force: true }),
+      client.ensureRegistered({ force: true }),
+    ]);
+    await vi.waitFor(() => expect(registrations).toBe(1));
+    release();
+    await pending;
+    expect(registrations).toBe(1);
+    expect(await client.status()).toMatchObject({ registration: "registered" });
+  });
+
+  it("never follows redirects when talking to the relay", async () => {
+    await new RelayPushSender(makeClient()).sendPoke(relayTargets(1), poke);
+    expect(relay.calls.every((call) => call.redirect === "error")).toBe(true);
+  });
+
+  it.each([
+    ["empty object", { status: 201, body: {} }],
+    [
+      "blocked status",
+      {
+        status: 200,
+        body: { serverId: SERVER_ID, status: "blocked", limits: VALID_REGISTRATION.limits },
+      },
+    ],
+    ["missing limits", { status: 201, body: { serverId: SERVER_ID, status: "active" } }],
+    [
+      "mismatched serverId",
+      {
+        status: 201,
+        body: { serverId: "srv_other", status: "active", limits: VALID_REGISTRATION.limits },
+      },
+    ],
+  ] as Array<[string, Reply]>)(
+    "treats a malformed registration (%s) as failure, not registered",
+    async (_label, reply) => {
+      relay.servers.push(reply);
+      const client = makeClient();
+      const [result] = await new RelayPushSender(client).sendPoke(relayTargets(1), poke);
+      expect(result).toMatchObject({ ok: false, reason: "transient" });
+      expect(await client.status()).toMatchObject({ registration: "failed" });
+      expect(relay.calls.filter((c) => c.path === "/v1/send")).toEqual([]);
+    },
+  );
+
+  it("treats a non-JSON registration body as failure, not registered", async () => {
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      if (url.pathname === "/v1/servers") {
+        return new Response("<html>landing</html>", {
+          status: 200,
+          headers: { "content-type": "text/html" },
+        });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    }) as typeof fetch;
+    const client = new RelayClient({
+      url: "https://relay.example",
+      loadIdentity: async () => identity,
+      version: "1.2.3",
+      fetch: fetchImpl,
+    });
+    const [result] = await new RelayPushSender(client).sendPoke(relayTargets(1), poke);
+    expect(result).toMatchObject({ ok: false, reason: "transient" });
+    expect(await client.status()).toMatchObject({ registration: "failed" });
   });
 
   it("does nothing at all for no devices", async () => {

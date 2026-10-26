@@ -30,7 +30,12 @@ function payloadKeyAtRest(): Buffer {
 export async function registerToken(userId: string, body: PushTokenBody): Promise<void> {
   const now = new Date();
   if (body.transport === "relay") {
-    const payloadKey = fromBase64url(body.payloadKey);
+    let payloadKey: Buffer;
+    try {
+      payloadKey = fromBase64url(body.payloadKey);
+    } catch {
+      throw ApiError.badRequest("payloadKey: must be canonical base64url of 32 bytes.");
+    }
     // The id is derived, not chosen, and every envelope names it. One that
     // does not match would have the app look up a key it never stored.
     if (payloadKeyId(payloadKey) !== body.keyId) {
@@ -46,14 +51,15 @@ export async function registerToken(userId: string, body: PushTokenBody): Promis
     };
     // Never revives a disabled row (protocol C6): the relay said this token
     // is gone, so pushes to it would only fail again. The app has to register
-    // with the relay afresh, and it learns that from the 410.
+    // with the relay afresh, and it learns that from the 410. Also refuse to
+    // overwrite a different transport's row for the same token.
     const [stored] = await db
       .insert(deviceToken)
       .values({ ...relay, token: body.relayToken })
       .onConflictDoUpdate({
         target: deviceToken.token,
         set: relay,
-        setWhere: isNull(deviceToken.disabledAt),
+        setWhere: and(isNull(deviceToken.disabledAt), eq(deviceToken.transport, "relay")),
       })
       .returning({ id: deviceToken.id });
     if (!stored) {
@@ -73,13 +79,23 @@ export async function registerToken(userId: string, body: PushTokenBody): Promis
     keyId: null,
     lastSeenAt: now,
   };
-  await db
+  // Only update an existing APNs row: a conflict with a relay registration
+  // must leave that row alone (protocol C6), not clear disabledAt or switch
+  // transport. Schema already rejects `rt_` tokens; this is the belt.
+  const [stored] = await db
     .insert(deviceToken)
     .values({ ...apns, token: body.token })
     .onConflictDoUpdate({
       target: deviceToken.token,
       set: { ...apns, disabledAt: null },
-    });
+      setWhere: eq(deviceToken.transport, "apns"),
+    })
+    .returning({ id: deviceToken.id });
+  if (!stored) {
+    throw ApiError.conflict(
+      "This token is already registered for a different push transport.",
+    );
+  }
 }
 
 /**
