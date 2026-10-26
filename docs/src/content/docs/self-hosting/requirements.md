@@ -15,11 +15,13 @@ The Jolt iOS app can point at any Jolt Server. To run one you need:
   Caddy. Port 80 is not optional: it is how the Let's Encrypt (ACME) challenge
   is answered. If you already run a reverse proxy, see
   [Reverse proxy & TLS](/jolt-server/self-hosting/reverse-proxy/) instead.
-- **Optional: an Apple Developer account**, if you want pokes to reach a phone
-  whose app is in the background. Without it everything else works, and the
-  pushes the server would have sent are logged instead. APNs keys only work for
-  an app build signed by the same Apple team, so this also means using your own
-  build of the app. See
+- **Optional: a push relay URL**, if you want pokes to reach a phone whose app
+  is in the background. The push relay delivers to the official app builds
+  with no Apple account on your side. Without push everything else works, and
+  the pushes the server would have sent are logged instead. Your own Apple
+  Developer account is the alternative, but APNs keys only work for an app
+  build signed by the same Apple team, so it also means using your own build
+  of the app. See
   [Push notifications](/jolt-server/self-hosting/push-notifications/).
 
 ## What runs

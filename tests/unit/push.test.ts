@@ -20,7 +20,7 @@ const payload: PokePushPayload = {
   viaApiToken: false,
 };
 
-const target: PushTarget = { id: "device-1", token: "abc123deadbeef" };
+const target: PushTarget = { id: "device-1", token: "abc123deadbeef", transport: "apns" };
 
 const testPayload: TestPushPayload = {
   testID: "test-1",
@@ -254,7 +254,7 @@ describe("ConsolePushSender", () => {
     const lines: Array<string> = [];
     const sender = new ConsolePushSender((message) => lines.push(message));
 
-    const results = await sender.sendPoke([target, { id: "device-2", token: "zzz" }], payload);
+    const results = await sender.sendPoke([target, { id: "device-2", token: "zzz", transport: "apns" }], payload);
 
     expect(results).toEqual([
       { targetId: "device-1", ok: true },

@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: How Jolt Server is put together, from an HTTP request down to Postgres and APNs.
+description: How Jolt Server is put together, from an HTTP request down to Postgres, APNs and the push relay.
 ---
 
 Jolt Server is one TypeScript application that serves both the web UI and the
@@ -13,7 +13,7 @@ JSON API, backed by Postgres.
 | Database        | Postgres 16 through Drizzle ORM (`postgres` driver); migrations by drizzle-kit |
 | Authentication  | Better Auth: email and password, with the bearer plugin for the mobile app  |
 | Validation      | Zod, mirroring the OpenAPI contract                                         |
-| Push            | APNs over HTTP/2 with token-based (`.p8`) auth, or a console stub           |
+| Push            | The Jolt push relay, APNs over HTTP/2 with token-based (`.p8`) auth, or a console stub |
 | UI              | React 19, Tailwind CSS 4, Radix UI                                          |
 | Error reporting | Sentry, when `SENTRY_DSN` is set                                            |
 
@@ -35,7 +35,7 @@ src/
   server/              server functions the web UI calls (createServerFn)
   auth/                Better Auth configuration and trusted origins
   db/                  Drizzle schema and connection
-  push/                push senders: APNs and console
+  push/                push senders (APNs, relay, console), the routing between them, relay crypto
   cron/                retention and cleanup jobs
 scripts/               seed-admin, cron runner, OpenAPI drift check, APNs setup wizard
 drizzle/               SQL migrations
@@ -66,9 +66,10 @@ Take `POST /api/v1/pokes`:
    grant, automation consent, intensity cap and cooldown, then the token's
    firing interval. It records a `poke_event` row with status `pending`.
 6. **Push.** Delivery runs after the response is decided and does not hold it
-   up. `pushSender()` in `src/push/index.ts` returns the APNs sender when all
-   three credentials are set, otherwise the console sender. Device tokens
-   that APNs reports as dead are marked disabled.
+   up. `pushSender()` in `src/push/index.ts` sends each of the recipient's
+   devices the way it registered: directly to APNs, or through the push relay
+   (see [Push](#push)). Devices that APNs or the relay report as gone are
+   marked disabled.
 7. **Response.** `src/api/present.ts` shapes database rows into contract
    objects such as `PokeEvent`, and the handler returns JSON.
 
@@ -98,9 +99,9 @@ Auth to the `{ token, user }` shape of the contract (`src/api/auth-bridge.ts`).
 | `friend_request`                                   | Pending, accepted and rejected requests                       |
 | `friend_permission`                                | One grant per granter, grantee and stimulus kind              |
 | `poke_event`                                       | Every poke and self-stimulus, with its delivery status        |
-| `device_token`                                     | Registered APNs device tokens                                 |
+| `device_token`                                     | Registered devices: an APNs token, or a relay token with its sealed payload key |
 | `api_token`, `api_token_friend`                    | Personal access tokens (hashed) and their friend allowlists   |
-| `server_setting`                                   | Admin-changed server settings                                 |
+| `server_setting`                                   | Admin-changed server settings, and the server's relay identity |
 
 Migrations are SQL files in `drizzle/`, generated from the schema with
 `pnpm db:generate` and applied with `pnpm db:migrate` (drizzle-kit). In the
@@ -108,16 +109,57 @@ compose stack, the `migrate` service applies them before `app` starts.
 
 ## Push
 
-`src/push/types.ts` defines the `PushSender` interface. There are two
-implementations:
+`src/push/types.ts` defines the `PushSender` interface. There are three
+implementations, and a router in front of them:
 
 - `ApnsPushSender` (`src/push/apns.ts`) talks to `api.push.apple.com` or
   `api.sandbox.push.apple.com` over one shared HTTP/2 session, with a JWT
   signed by the `.p8` key. Each poke sends an alert push and a separate silent
   push to every active device of the recipient.
+- `RelayPushSender` (`src/push/relay.ts`) sends through the Jolt push relay,
+  which holds the APNs key of the official app builds. It seals each payload
+  for each device (`src/push/envelope.ts`: AES-256-GCM under the payload key
+  the app registered, bound to the server ID and the message kind) and posts
+  them to the relay's `/v1/send` in batches of at most 100. The relay sends
+  the alert and silent pair to Apple.
 - `ConsolePushSender` (`src/push/console.ts`) logs what it would have sent and
-  reports success. It is the default whenever APNs credentials are missing,
+  reports success. It stands in for any transport the server cannot deliver,
   so the whole flow can be exercised with no Apple account.
+- `RoutingPushSender` (`src/push/routing.ts`) is what `pushSender()` returns.
+  It splits a poke's devices by their `transport` column and hands each group
+  to its sender, so one user can have a phone on each.
+
+`src/env.ts` decides the routing at startup (`resolvePushRouting`): which
+transport `GET /api/v1/push/config` tells apps to register with, and whether
+devices already registered with the relay can still be reached. The
+[configuration reference](/jolt-server/self-hosting/configuration/#push-notifications)
+has the table.
+
+### The relay identity
+
+`src/push/relay-identity.ts` holds the server's side of the relay protocol
+(specified in the jolt-relay repository, `spec/protocol-v1.md`):
+
+- The server is an Ed25519 key pair, from `PUSH_RELAY_PRIVATE_KEY` or
+  generated on first use and stored as the `relay_identity` server setting,
+  sealed under a key derived from `PUSH_RELAY_IDENTITY_SECRET`
+  (`src/lib/sealed.ts`). Not under `BETTER_AUTH_SECRET`: rotating that must
+  not change the server ID. An identity stored unsealed by an older version
+  is sealed in place the first time it is read with the secret.
+  Its ID is `srv_` and the base32 of the first 16 bytes of SHA-256 of the
+  public key.
+- Every request to the relay carries a JWT signed with that key, valid for
+  five minutes.
+- `RelayClient` registers the server with `POST /v1/servers` the first time
+  it is needed (a push, or an app asking `GET /push/config`), and again if the
+  relay answers `404 unknown_server`. Its state is what the admin overview
+  shows.
+
+The payload keys apps register are stored sealed with AES-256-GCM under a key
+derived from `BETTER_AUTH_SECRET` with HKDF (`src/push/payload-key.ts`), and
+unsealed only on the way to the relay sender. The envelope and the server ID
+are tested against the shared vectors in `tests/unit/vectors/`, copied from
+jolt-relay.
 
 Test pushes (`src/services/push-test.ts`) use the same senders and keep their
 state in memory for ten minutes.
@@ -132,7 +174,7 @@ The `cron` container runs `pnpm cron` once an hour, which runs every job in
 | `prune-poke-events`        | Deletes poke events older than `POKE_EVENT_RETENTION_DAYS` (default 90).        |
 | `expire-friend-requests`   | Rejects pending friend requests older than `FRIEND_REQUEST_EXPIRY_DAYS` (default 30). |
 | `prune-expired-api-tokens` | Deletes personal access tokens that expired more than a week ago.              |
-| `cull-dead-tokens`         | Deletes device tokens APNs reported as unregistered more than a week ago.      |
+| `cull-dead-tokens`         | Deletes device tokens APNs or the relay reported as unregistered more than a week ago. |
 
 `pnpm cron --list` lists them and `pnpm cron --once <job>` runs one.
 

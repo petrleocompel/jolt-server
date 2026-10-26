@@ -1,6 +1,6 @@
 import { ApiError } from "#/api/errors";
 import type { StimulusConfig, TestPushAck, TestPushStatus } from "#/api/schemas";
-import { hasApnsCredentials } from "#/env";
+import { pushRouting } from "#/env";
 import { pushSender } from "#/push";
 import { markUnregistered, targetsFor } from "#/services/devices";
 
@@ -102,14 +102,20 @@ export async function sendTestPush(options: SendTestPushOptions): Promise<TestPu
   const dead = results.filter((r) => r.reason === "unregistered").map((r) => r.targetId);
   await markUnregistered(dead);
 
+  const byId = new Map(targets.map((target) => [target.id, target]));
   const status: TestPushStatus = {
     testID,
     sentAt,
     source: options.source,
     stimulus: options.stimulus,
-    apnsConfigured: hasApnsCredentials,
+    // Despite its name, what older clients read it as: "will this ever arrive?"
+    apnsConfigured: pushRouting.transport !== "none",
+    pushTransport: pushRouting.transport,
     devices: results.map((result) => ({
       deviceId: result.targetId,
+      // The device's own transport — not the server's preferred one — so a
+      // console fallback for an APNs row cannot look like a relay acceptance.
+      transport: byId.get(result.targetId)?.transport ?? "apns",
       ok: result.ok,
       reason: result.reason,
       detail: result.detail,
